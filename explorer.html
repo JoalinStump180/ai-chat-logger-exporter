@@ -37,6 +37,7 @@
     thead th .grip { float: right; width: 6px; cursor: col-resize; height: 14px; background: #ccc; }
     tbody td { padding: 4px 8px; border-bottom: 1px solid #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     tbody tr.sel { background: #cce8ff; }
+    .ptt-selected { background: #cce8ff; border-radius: 2px; }
     tbody tr.banner { background: #f7f9fc; font-weight: 500; }
     tbody tr.item-row { background: #fff; }
     tbody tr.item-row td:nth-child(3) { font-family: Consolas, monospace; font-size: 12px; }
@@ -123,6 +124,12 @@
     <span class="spacer"></span>
     <button type="button" id="prevHit">Prev hit</button>
     <button type="button" id="nextHit">Next hit</button>
+    <button type="button" id="prevItem">Prev item</button>
+    <button type="button" id="nextItem">Next item</button>
+    <label title="Extra vertical offset for long-item head alignment. Positive values place the item lower; negative values place it higher." style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
+      Head offset (px)
+      <input id="headOffsetPx" type="number" step="1" value="36" style="width:62px;height:24px;box-sizing:border-box;" />
+    </label>
   </div>
   <div class="split">
     <aside class="side">
@@ -156,7 +163,8 @@
               <th style="width:50px">ID</th>
             </tr>
           </thead>
-          <tbody id="tbody"></tbody>
+          <tbody id="titleView"></tbody>
+          <tbody id="dateTimeView" hidden></tbody>
         </table>
         <div id="empty" class="empty" hidden>No items match.</div>
       </div>
