@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Chat Ask Logger</title>
+  <style>
+    body { font: 12px/1.4 "Segoe UI", sans-serif; width: 400px; margin: 0; background: #f3f3f3; }
+    header { padding: 8px 10px; border-bottom: 1px solid #ccc; background: #fff; }
+    #opts, #syncbar { padding: 8px 10px; background: #fff; border-bottom: 1px solid #ccc; }
+    #opts label { display: block; margin: 4px 0; cursor: pointer; }
+    #opts .hint, #syncbar .hint { color: #666; font-size: 11px; margin: 4px 0 0; }
+    #syncbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    #syncRange { width: 72px; }
+    #list { max-height: 280px; overflow: auto; background: #fff; }
+    .row { padding: 6px 10px; border-bottom: 1px solid #eee; word-break: break-all; }
+    .meta { color: #666; }
+    button { font: 12px "Segoe UI", sans-serif; }
+  </style>
+</head>
+<body>
+  <header>
+    Recent chats (one row per conversation)
+    <div><a href="#" id="openExplorer">Open explorer (same IndexedDB)</a></div>
+  </header>
+  <div id="opts">
+    <label><input type="checkbox" id="optShowStamps" checked /> Show ask-bubble timestamp stick-text</label>
+    <label><input type="checkbox" id="optLogAsks" checked /> Log each ask (prompt text)</label>
+    <label><input type="checkbox" id="optSeenAsks" /> Auto-log seen ask bubbles</label>
+    <label><input type="checkbox" id="optSeenAnswers" /> Auto-log seen answer bubbles</label>
+    <label><input type="checkbox" id="optSeenDebug" checked /> Show seen-route debug box on the page</label>
+    <div class="hint">Session date/time, site title, URL/chat id, and account name/email are always logged. Ask text is optional. Seen bubbles log only when the bubble has the same response id import uses, and import then skips that slot.</div>
+  </div>
+  <div id="syncbar">
+    <span>Manual sync</span>
+    <input id="syncRange" value="1:10" title="newest range, 1-based e.g. 1:10" />
+    <button type="button" id="syncBtn">Sync</button>
+    <div class="hint">Opens a window listing newest chats on the current AI tab. Does not close after logging.</div>
+  </div>
+  <div id="list">Loading…</div>
+  <script src="db.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

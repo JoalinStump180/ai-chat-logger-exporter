@@ -1,0 +1,38 @@
+--- /workspace/artifacts/ai-chat-logger/curr/content.js	2026-10-04 00:14:37.709000000 +0000
++++ /workspace/artifacts/content-gemini.js	2026-10-04 02:25:28.633500781 +0000
+@@ -913,16 +913,25 @@
+       }
+     } else if (platform === "chatgpt") take('[data-message-author-role="user"]', '[data-message-author-role="assistant"]');
+     else if (platform === "gemini") {
+-      document.querySelectorAll("user-query").forEach((el) => {
+-        const uid = geminiTurnId(el);
+-        const text = messageText(el);
+-        if (uid && text) out.push({ role: "user", uid, text });
+-      });
+-      document.querySelectorAll("model-response").forEach((el) => {
+-        const body = el.querySelector("message-content, model-response-content, .model-response-text") || el;
+-        const uid = geminiTurnId(el);
+-        const text = messageText(body);
+-        if (uid && text) out.push({ role: "assistant", uid, text });
++      const wraps = document.querySelectorAll("#chat-history infinite-scroller > div[id], #chat-history > div[id]");
++      const list = wraps.length ? wraps : document.querySelectorAll("user-query, model-response");
++      list.forEach((el) => {
++        const wrap = el.matches && el.matches("user-query, model-response") ? el.parentElement : el;
++        if (!wrap) return;
++        const hex = (wrap.id || "").match(/^[0-9a-f]{8,}$/i);
++        const uid = hex ? "r_" + wrap.id : geminiTurnId(wrap);
++        if (!uid) return;
++        const user = wrap.querySelector(":scope > user-query") || wrap.querySelector("user-query");
++        const ans = wrap.querySelector(":scope > model-response") || wrap.querySelector("model-response");
++        if (user) {
++          const text = messageText(user);
++          if (text) out.push({ role: "user", uid, text });
++        }
++        if (ans) {
++          const body = ans.querySelector("message-content, model-response-content, .model-response-text") || ans;
++          const text = messageText(body);
++          if (text) out.push({ role: "assistant", uid, text });
++        }
+       });
+     }
+     return out;

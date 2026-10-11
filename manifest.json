@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "AI Chat Ask Logger",
+  "version": "0.3.8",
+  "description": "Log ChatGPT / Gemini / Grok conversations. One row per chat; asks stored like comments. Ctrl+Up/Down history + on-page timestamps.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://x.com/i/grok*",
+        "https://x.com/grok*"
+      ],
+      "js": ["page-hook.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://x.com/i/grok*",
+        "https://x.com/grok*",
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "AI Chat Ask Logger",
+    "default_popup": "popup.html"
+  }
+}
