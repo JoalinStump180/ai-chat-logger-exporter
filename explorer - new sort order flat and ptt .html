@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Chat Explorer</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { font: 13px/1.35 "Segoe UI", Tahoma, sans-serif; background: #f0f0f0; color: #222; display: flex; flex-direction: column; }
+    .toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #f3f3f3; border-bottom: 1px solid #c8c8c8; flex-wrap: wrap; }
+    .qwrap { position: relative; flex: 1; min-width: 220px; }
+    .toolbar input[type="search"] { width: 100%; height: 24px; border: 1px solid #adadad; padding: 0 8px; box-sizing: border-box; }
+    #qHist { position: absolute; left: 0; right: 0; top: 24px; z-index: 20; max-height: 220px; overflow: auto; background: #fff; border: 1px solid #adadad; display: none; }
+    #qHist div { padding: 4px 8px; cursor: pointer; }
+    #qHist div:hover { background: #e5f3ff; }
+    .toolbar button, .path, .bar2 button { height: 24px; border: 1px solid #adadad; background: #e1e1e1; padding: 0 10px; font: inherit; }
+    .path { display: flex; align-items: center; background: #fff; min-width: 120px; color: #444; }
+    #tokenBar { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 8px; background: #fff; border-bottom: 1px solid #ddd; min-height: 20px; }
+    .bar2 { display: flex; gap: 6px; align-items: center; padding: 4px 8px; background: #f7f7f7; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
+    .twrap { position: relative; display: flex; align-items: center; gap: 4px; }
+    .twrap input[type="text"] { width: 150px; height: 24px; border: 1px solid #adadad; padding: 0 6px; }
+    .thist { position: absolute; left: 36px; top: 26px; z-index: 20; width: 180px; max-height: 220px; overflow: auto; background: #fff; border: 1px solid #adadad; display: none; }
+    .thist div { padding: 4px 8px; cursor: pointer; }
+    .thist div:hover { background: #e5f3ff; }
+    .bar2 .spacer { flex: 1; }
+    .split { flex: 1; display: flex; min-height: 0; }
+    .side { width: 180px; background: #fff; border-right: 1px solid #c8c8c8; padding: 8px 0; }
+    .side div { padding: 6px 12px; cursor: pointer; }
+    .side .on { background: #cce8ff; }
+    #sideMenu { position: fixed; z-index: 30; background: #fff; border: 1px solid #adadad; min-width: 140px; }
+    #sideMenu button { display: block; width: 100%; text-align: left; border: 0; background: #fff; padding: 6px 10px; }
+    #sideMenu button:hover { background: #e5f3ff; }
+    #routeBox { position: fixed; z-index: 31; right: 16px; top: 80px; width: 360px; background: #fff; border: 1px solid #adadad; padding: 8px; }
+    #routeBox textarea { width: 100%; height: 140px; }
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    thead th { text-align: left; font-weight: 600; background: #f5f5f5; border-bottom: 1px solid #d0d0d0; padding: 5px 8px; position: sticky; top: 0; }
+    thead th .grip { float: right; width: 6px; cursor: col-resize; height: 14px; background: #ccc; }
+    tbody td { padding: 4px 8px; border-bottom: 1px solid #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    tbody tr.sel { background: #cce8ff; }
+    tbody tr.banner { background: #f7f9fc; font-weight: 500; }
+    tbody tr.item-row { background: #fff; }
+    tbody tr.item-row td:nth-child(3) { font-family: Consolas, monospace; font-size: 12px; }
+    button.fold, button.ansfold { width: 22px; height: 18px; padding: 0; margin-right: 3px; vertical-align: middle; }
+    .hit { padding: 0 1px; border-radius: 2px; }
+    .ptt-tree { margin: 4px 8px 8px 16px; }
+    .ptt-row { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0; }
+    .ptt-tog { width: 18px; height: 18px; flex: 0 0 18px; border: 1px solid #adadad; background: #e1e1e1; font: 12px/16px monospace; padding: 0; cursor: pointer; }
+    .ptt-tog[disabled] { opacity: .3; cursor: default; }
+    .ptt-tag { color: #003a8c; white-space: nowrap; font-family: Consolas, monospace; }
+    .ptt-txt { color: #222; word-break: break-word; white-space: pre-wrap; flex: 1; }
+    .ptt-kids { margin-left: 16px; border-left: 1px dotted #bbb; padding-left: 8px; }
+    .ptt-kids[hidden] { display: none; }
+    .ptt-more { position: relative; flex: 0 0 auto; }
+    .ptt-dots { width: 22px; height: 18px; border: 1px solid #adadad; background: #fff; cursor: pointer; }
+    .ptt-menu { position: absolute; right: 0; top: 18px; z-index: 5; background: #fff; border: 1px solid #ccc; display: flex; flex-direction: column; min-width: 88px; }
+    .ptt-menu[hidden] { display: none; }
+    .ptt-menu button { text-align: left; border: 0; background: #fff; padding: 4px 8px; cursor: pointer; }
+    .ptt-menu button:hover { background: #e8f1ff; }
+    .ptt-editbox { width: 100%; min-height: 48px; font: 12px Consolas, monospace; }
+    .ptt-jump { outline: 2px solid #06c; }
+    .listwrap { flex: 1; overflow: auto; min-height: 140px; }
+    .hsplit { height: 6px; cursor: ns-resize; background: #d0d0d0; flex-shrink: 0; }
+    .hits { height: 200px; min-height: 80px; border-top: 1px solid #c8c8c8; background: #fafafa; display: flex; flex-direction: column; }
+    .hits thead th { position: sticky; top: 0; }
+    .hits .hitwrap { flex: 1; overflow: auto; }
+    .hits tr.on { background: #cce8ff; }
+    .status { height: 22px; border-top: 1px solid #c8c8c8; background: #f3f3f3; padding: 3px 8px; color: #555; }
+    .empty { padding: 24px; color: #777; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="path">extension:\aiChatAskLog\records</span>
+    <div class="qwrap">
+      <input id="q" type="search" list="" placeholder='apple "banana orange" URLID:1,3-7' autocomplete="off" />
+      <div id="qHist"></div>
+    </div>
+    <span id="seek" style="min-width:160px;color:#555;">Seek 0%</span>
+    <label><input type="checkbox" id="includeComments" /> Including asks <span id="includeCommentsLabel">off</span></label>
+    <label><input type="checkbox" id="includeImpAsks" /> Including imported asks <span id="includeImpAsksLabel">off</span></label>
+    <label><input type="checkbox" id="includeImpAns" /> Including imported answer/s <span id="includeImpAnsLabel">off</span></label>
+    <label>Live ask sort
+      <select id="liveSort">
+        <option value="ts-asc">time &#8593;</option>
+        <option value="ts-desc">time &#8595;</option>
+      </select>
+    </label>
+    <button id="reloadBtn">Refresh</button>
+    <button id="delBtn">Delete</button>
+    <button id="exportBtn">Export</button>
+    <button id="importBtn">Import</button>
+    <input id="fileInput" type="file" accept="application/json" hidden />
+  </div>
+  <div id="tokenBar"></div>
+  <div class="bar2">
+    <label style="display:flex;align-items:center;gap:4px;">
+      mode
+      <select id="dispMode" style="height:24px;width:90px;">
+        <option value="ptt" selected>ptt</option>
+        <option value="flat">flat</option>
+      </select>
+    </label>
+    <div class="twrap">
+      <label>from</label>
+      <input id="fromBox" type="text" placeholder="YYYY-MM-DD" autocomplete="off" />
+      <button type="button" id="fromCal" title="calendar">cal</button>
+      <button type="button" id="fromClr" title="clear from">x</button>
+      <input id="fromPicker" type="date" hidden />
+      <div id="fromHist" class="thist"></div>
+    </div>
+    <div class="twrap">
+      <label>to</label>
+      <input id="toBox" type="text" placeholder="YYYY-MM-DD" autocomplete="off" />
+      <button type="button" id="toCal" title="calendar">cal</button>
+      <button type="button" id="toClr" title="clear to">x</button>
+      <input id="toPicker" type="date" hidden />
+      <div id="toHist" class="thist"></div>
+    </div>
+    <button type="button" id="foldAsksBtn">Fold imported asks</button>
+    <button type="button" id="unfoldAsksBtn">Unfold imported asks</button>
+    <button type="button" id="foldAnsBtn">Fold imported answers</button>
+    <button type="button" id="unfoldAnsBtn">Unfold imported answers</button>
+    <span class="spacer"></span>
+    <button type="button" id="prevHit">Prev hit</button>
+    <button type="button" id="nextHit">Next hit</button>
+  </div>
+  <div class="split">
+    <aside class="side">
+      <div class="on" data-filter="all">All chats</div>
+      <div data-filter="chatgpt">ChatGPT</div>
+      <div data-filter="gemini">Gemini</div>
+      <div data-filter="grok">Grok</div>
+      <div data-filter="recycle">recycle</div>
+    </aside>
+    <div id="sideMenu" hidden>
+      <button type="button" id="sideAdd">Add item</button>
+      <button type="button" id="sideConfig">Configure</button>
+      <button type="button" id="sideDelete">Delete</button>
+    </div>
+    <div id="routeBox" hidden>
+      <div id="routeTitle">Configure</div>
+      <textarea id="routeText" placeholder="onMsg:https://notebook.google.com/notebook&#10;seen_online:https://notebook.google.com/notebook"></textarea>
+      <button type="button" id="routeSave">Save</button>
+      <button type="button" id="routeClose">Close</button>
+    </div>
+    <div class="main">
+      <div class="listwrap">
+        <table>
+          <thead>
+            <tr>
+              <th id="thDateTime" style="width:160px;cursor:pointer" title="sort by item datetime (onMsg/ask)">date-time</th>
+              <th style="width:70px">Site</th>
+              <th id="thTitle" style="width:600px;cursor:pointer" title="sort by session (current order)">Title <span class="grip" data-col="thTitle"></span></th>
+              <th>URL / chat id</th>
+              <th style="width:50px">Asks</th>
+              <th style="width:50px">ID</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden>No items match.</div>
+      </div>
+      <div class="hsplit" id="hSplit"></div>
+      <div class="hits" id="hitsPane">
+        <div class="hitwrap">
+          <table>
+            <thead>
+              <tr>
+                <th id="thHitDt" style="width:150px;cursor:pointer" title="sort by datetime">datetime</th>
+                <th id="thDelDt" style="width:150px;cursor:pointer" title="sort by delete time">del datetime</th>
+                <th style="width:70px">urlid</th>
+                <th style="width:140px">node</th>
+                <th style="width:50px">line</th>
+                <th id="thHitTxt">text <span class="grip" data-col="thHitTxt"></span></th>
+              </tr>
+            </thead>
+            <tbody id="hitBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="status" id="status">0 items</div>
+  <script src="db.js"></script>
+  <script src="explorer.js"></script>
+</body>
+</html>

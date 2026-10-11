@@ -6,6 +6,8 @@ let includeComments = false;
 let includeImpAsks = false;
 let includeImpAns = false;
 let liveSort = "ts-asc";
+let middleMode = "ptt"; // sort: "ptt" = session/title order, "item" = date-time item order
+let dispStyle = "ptt"; // display: "ptt" (default multi-line tree) or "flat"
 const openChats = new Set();
 const openAns = new Set();
 const forceOpenAsk = new Set();
@@ -458,13 +460,105 @@ function rowHtml(r) {
   const fold = '<button class="fold" data-ck="' + esc(r.convKey) + '" type="button">' + (show ? "\u2212" : "+") + "</button>";
   const ansFold = '<button class="ansfold" data-ck="' + esc(r.convKey) + '" type="button" title="fold/unfold all imported answers">' + (ansOn ? "\u2212a" : "+a") + "</button>";
   const detail = show
-    ? '<tr class="cmt-row" data-ck="' + esc(r.convKey) + '"><td colspan="7">' + askBlock(r, all, tokens) + "</td></tr>"
+    ? '<tr class="cmt-row" data-ck="' + esc(r.convKey) + '"><td colspan="6">' + askBlock(r, all, tokens) + "</td></tr>"
     : "";
   return '<tr data-id="' + r.id + '" data-ck="' + esc(r.convKey) + '" class="' + (r.id === selectedId ? "sel" : "") + '">' +
-    "<td>" + esc(r.date) + "</td><td>" + esc(r.time) + "</td><td>" + esc(r.platform) + "</td>" +
+    "<td>" + esc(fmtTs(rowTs(r))) + "</td><td>" + esc(r.platform) + "</td>" +
     '<td title="' + esc(r.title) + '">' + fold + ansFold + esc(r.title || "") + "</td>" +
     '<td title="' + esc(r.url) + '">' + esc(r.conversationId || r.url || "") + "</td>" +
     "<td>" + (all.length || r.askCount || 0) + "</td><td>" + r.id + "</td></tr>" + detail;
+}
+
+function collectItems(sessions, tokens) {
+  const items = [];
+  sessions.forEach(function (r) {
+    const list = viewAsks(r.convKey);
+    list.forEach(function (c) {
+      if (isOnMsg(c) || !isImp(c) || (includeImpAsks && isImp(c))) {
+        if (!inTime(c.ts)) return;
+        if (tokens.length && !hayHasAll(askHay(c), tokens) && !hayHasAll(pageHay(r), tokens)) return;
+        items.push({
+          ts: c.ts || 0,
+          convKey: r.convKey,
+          session: r,
+          kind: isOnMsg(c) ? "onMsg" : "ask",
+          localIndex: c.localIndex,
+          text: c.text || "",
+          recordKey: c.recordKey || ""
+        });
+      }
+    });
+  });
+  items.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+  return items;
+}
+
+function groupItems(items) {
+  const groups = [];
+  items.forEach(function (it) {
+    const last = groups[groups.length - 1];
+    if (!last || last.convKey !== it.convKey) {
+      groups.push({ convKey: it.convKey, session: it.session, items: [it] });
+    } else {
+      last.items.push(it);
+    }
+  });
+  return groups;
+}
+
+function itemRowHtml(it, tokens) {
+  const tag = it.kind === "onMsg" ? ("onMsg#" + it.localIndex) : ("ask#" + it.localIndex);
+  return '<tr class="item-row" data-ck="' + esc(it.convKey) + '" data-nid="' + esc(it.kind + "-" + (it.recordKey || it.localIndex)) + '">' +
+    "<td>" + esc(fmtTs(it.ts)) + "</td><td>" + esc(it.session.platform) + "</td>" +
+    '<td>' + esc(tag) + "  " + highlightText(it.text, tokens) + "</td>" +
+    '<td title="' + esc(it.session.url) + '">' + esc(it.session.conversationId || it.session.url || "") + "</td>" +
+    "<td></td><td></td></tr>";
+}
+
+function bannerRowHtml(session) {
+  return '<tr class="banner' + (session.id === selectedId ? " sel" : "") + '" data-id="' + session.id + '" data-ck="' + esc(session.convKey) + '">' +
+    "<td>" + esc(fmtTs(rowTs(session))) + "</td><td>" + esc(session.platform) + "</td>" +
+    '<td title="' + esc(session.title) + '"><b>' + esc(session.title || "(no title)") + "</b></td>" +
+    '<td title="' + esc(session.url) + '">' + esc(session.conversationId || session.url || "") + "</td>" +
+    "<td>" + (viewAsks(session.convKey).length || session.askCount || 0) + "</td><td>" + session.id + "</td></tr>";
+}
+
+function renderItemMode(tokens) {
+  const items = collectItems(matched, tokens);
+  const groups = groupItems(items);
+  const tb = $("tbody");
+  tb.innerHTML = "";
+  const html = [];
+  groups.forEach(function (g) {
+    html.push(bannerRowHtml(g.session));
+    if (dispStyle === "ptt") {
+      const ptt = g.items.map(function (it) {
+        const fake = {
+          localIndex: it.localIndex,
+          ts: it.ts,
+          text: it.text,
+          recordKey: it.recordKey,
+          answers: []
+        };
+        return pttAskNode(fake, tokens, false, it.kind);
+      }).join("");
+      html.push('<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>");
+    } else {
+      g.items.forEach(function (it) { html.push(itemRowHtml(it, tokens)); });
+    }
+  });
+  tb.innerHTML = html.join("");
+  $("empty").hidden = groups.length > 0;
+  $("status").textContent = items.length + " items in " + groups.length + " groups";
+}
+
+function updateHeaderIndicators() {
+  const thDt = $("thDateTime");
+  const thTi = $("thTitle");
+  if (thDt) thDt.textContent = "date-time" + (middleMode === "item" ? " ↓" : "");
+  if (thTi) thTi.innerHTML = "Title" + (middleMode === "ptt" ? " ↓" : "") + ' <span class="grip" data-col="thTitle"></span>';
+  const sel = $("dispMode");
+  if (sel && sel.value !== dispStyle) sel.value = dispStyle;
 }
 
 function sortHits() {
@@ -485,6 +579,13 @@ function paintHits(tokens) {
 function paintPreviewGone() {}
 
 function renderSlice(reset) {
+  if (middleMode === "item") {
+    const tokens = parseSearch($("q").value).tokens;
+    renderItemMode(tokens);
+    updateHeaderIndicators();
+    return;
+  }
+  // ptt / session mode
   const tb = $("tbody");
   if (reset) { shown = 0; tb.innerHTML = ""; }
   const next = matched.slice(shown, shown + PAGE);
@@ -492,6 +593,7 @@ function renderSlice(reset) {
   shown += next.length;
   $("empty").hidden = matched.length > 0;
   $("status").textContent = shown + " of " + matched.length + " shown";
+  updateHeaderIndicators();
 }
 
 function pushHist(q) {
@@ -543,6 +645,7 @@ function seek(q) {
   setSeek(100, "Seek 100%  " + matched.length + " urls + " + hitList.length + " hits");
   renderSlice(true);
   paintHits(parsed.tokens);
+  updateHeaderIndicators();
 }
 
 function jumpHit(i) {
@@ -777,6 +880,18 @@ $("thHitDt").addEventListener("click", function () {
   hitSort = hitSort === "ts-desc" ? "ts-asc" : "ts-desc";
   delSort = "";
   paintHits(parseSearch($("q").value).tokens);
+});
+$("thDateTime").addEventListener("click", function () {
+  middleMode = "item";
+  seek($("q").value);
+});
+$("thTitle").addEventListener("click", function () {
+  middleMode = "ptt";
+  seek($("q").value);
+});
+$("dispMode").addEventListener("change", function () {
+  dispStyle = this.value === "flat" ? "flat" : "ptt";
+  seek($("q").value);
 });
 $("thDelDt").addEventListener("click", function () {
   delSort = delSort === "del-desc" ? "del-asc" : "del-desc";

@@ -37,6 +37,9 @@
     thead th .grip { float: right; width: 6px; cursor: col-resize; height: 14px; background: #ccc; }
     tbody td { padding: 4px 8px; border-bottom: 1px solid #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     tbody tr.sel { background: #cce8ff; }
+    tbody tr.banner { background: #f7f9fc; font-weight: 500; }
+    tbody tr.item-row { background: #fff; }
+    tbody tr.item-row td:nth-child(3) { font-family: Consolas, monospace; font-size: 12px; }
     button.fold, button.ansfold { width: 22px; height: 18px; padding: 0; margin-right: 3px; vertical-align: middle; }
     .hit { padding: 0 1px; border-radius: 2px; }
     .ptt-tree { margin: 4px 8px 8px 16px; }
@@ -90,6 +93,13 @@
   </div>
   <div id="tokenBar"></div>
   <div class="bar2">
+    <label style="display:flex;align-items:center;gap:4px;">
+      mode
+      <select id="dispMode" style="height:24px;width:90px;">
+        <option value="ptt" selected>ptt</option>
+        <option value="flat">flat</option>
+      </select>
+    </label>
     <div class="twrap">
       <label>from</label>
       <input id="fromBox" type="text" placeholder="YYYY-MM-DD" autocomplete="off" />
@@ -138,10 +148,9 @@
         <table>
           <thead>
             <tr>
-              <th style="width:90px">Date</th>
-              <th style="width:70px">Time</th>
+              <th id="thDateTime" style="width:160px;cursor:pointer" title="sort by item datetime (onMsg/ask)">date-time</th>
               <th style="width:70px">Site</th>
-              <th id="thTitle" style="width:600px">Title <span class="grip" data-col="thTitle"></span></th>
+              <th id="thTitle" style="width:600px;cursor:pointer" title="sort by session (current order)">Title <span class="grip" data-col="thTitle"></span></th>
               <th>URL / chat id</th>
               <th style="width:50px">Asks</th>
               <th style="width:50px">ID</th>
