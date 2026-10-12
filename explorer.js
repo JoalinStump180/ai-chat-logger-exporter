@@ -1,4 +1,4 @@
-
+﻿
 
 const nidToConvKey = new Map(); // Maps every node ID directly to its exact convKey
 
@@ -140,7 +140,7 @@ async function loadAsksIndex() {
 }
 
 const PAGE = 80;
-const DT_BATCH = 20; // items rendered on either side when opening DateTime
+const DT_BATCH = 20; // items loaded per chronological scroll batch
 let datetimeItems = [];
 let dtStart = 0;
 let dtEnd = 0;
@@ -636,7 +636,70 @@ function renderDateTimeWindow(nid, scroll, scrollMode = "center") {
   if (nid) requestAnimationFrame(() => selectItemByNid(nid, !!scroll, scrollMode));
 }
 
+let datetimeHeadRefreshInFlight = false;
+let datetimeHeadRefreshAt = 0;
+
+async function refreshDateTimeHead() {
+  if (datetimeHeadRefreshInFlight || Date.now() - datetimeHeadRefreshAt < 1200) return;
+  datetimeHeadRefreshInFlight = true;
+  datetimeHeadRefreshAt = Date.now();
+  const wrap = $(".listwrap");
+  const tb = $("dateTimeView");
+  const oldHeight = wrap.scrollHeight;
+  try {
+    // Refresh the backing records as well as the ask index; scrolling alone
+    // cannot reveal records that were absent from the in-memory snapshot.
+    const freshRows = await getAll();
+    if (freshRows.length) rows = freshRows;
+    await loadAsksIndex();
+    const q = $("q").value;
+    const source = filter === "recycle" ? recycleChats : rows;
+    matched = source.filter(r => matchRow(r, q));
+    const tokens = parseSearch(q).tokens;
+    buildDateTimeItems(tokens);
+    dtStart = 0;
+    dtEnd = Math.min(datetimeItems.length, DT_BATCH);
+    tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+    $("empty").hidden = datetimeItems.length > 0;
+    $("status").textContent = (dtEnd - dtStart) + " of " + datetimeItems.length + " chronological items loaded";
+    // Keep the old content anchored instead of leaving the user pinned to the
+    // absolute top after newly discovered items have been inserted.
+    const addedHeight = wrap.scrollHeight - oldHeight;
+    if (addedHeight > 0) wrap.scrollTop += addedHeight;
+  } catch (err) {
+    console.warn("Could not refresh datetime head", err);
+  } finally {
+    datetimeHeadRefreshInFlight = false;
+  }
+}
 function appendDateTimeBatch(direction) {
+  if (middleMode !== "item" || !datetimeItems.length) return;
+  const tb = $("dateTimeView");
+  const tokens = parseSearch($("q").value).tokens;
+  
+  if (direction === "down" && dtEnd < datetimeItems.length) {
+    const oldEnd = dtEnd;
+    dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+    tb.insertAdjacentHTML("beforeend", datetimeRangeHtml(oldEnd, dtEnd, tokens));
+  } else if (direction === "up" && dtStart > 0) {
+    const oldStart = dtStart;
+    const nextStart = Math.max(0, dtStart - DT_BATCH);
+    const wrap = $(".listwrap");
+    const beforeHeight = wrap ? wrap.scrollHeight : 0;
+    
+    tb.insertAdjacentHTML("afterbegin", datetimeRangeHtml(nextStart, oldStart, tokens));
+    dtStart = nextStart;
+    
+    // Compensate for newly prepended items so scroll position remains stable
+    if (wrap) {
+      wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+    }
+  } else if (direction === "up" && dtStart === 0) {
+    refreshDateTimeHead();
+  }
+  $("status").textContent = (dtEnd - dtStart) + " of " + datetimeItems.length + " chronological items loaded";
+}
+function appendDateTimeBatch2(direction) {
   if (middleMode !== "item" || !datetimeItems.length) return;
   const tb = $("dateTimeView");
   const tokens = parseSearch($("q").value).tokens;
@@ -652,6 +715,10 @@ function appendDateTimeBatch(direction) {
     dtStart = nextStart;
     // Keep the same content under the user's eyes after prepending rows.
     $(".listwrap").scrollTop += $(".listwrap").scrollHeight - beforeHeight;
+  } else if (direction === "up" && dtStart === 0) {
+    // At the newest edge, refresh the source data to discover items created
+    // after this pane's chronological snapshot was built.
+    refreshDateTimeHead();
   }
   $("status").textContent = (dtEnd - dtStart) + " of " + datetimeItems.length + " chronological items loaded";
 }
@@ -1458,12 +1525,31 @@ $("unfoldAnsBtn").onclick = function () { batchAnsOpen = true; matched.forEach((
 document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   const el = e.target;
   if (middleMode === "item") {
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) appendDateTimeBatch("down");
-    else if (el.scrollTop < 80) appendDateTimeBatch("up");
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) enforceSlidingWindow("down");
+    //if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) appendDateTimeBatch("down");
+    else if (el.scrollTop < 80) enforceSlidingWindow("up");
+    //else if (el.scrollTop < 80) appendDateTimeBatch("up");
   } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40 && shown < matched.length) {
     renderSlice(false);
   }
 });
+
+
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "PageUp") {
+    if (middleMode === "item") {
+      const wrap = document.querySelector(".listwrap");
+      if (wrap && wrap.scrollTop <= 80) {
+        e.preventDefault();
+        appendDateTimeBatch("up");
+      }
+    }
+  }
+});
+
+
+
 
 function patternLen(q) {
   let s = String(q || "");
@@ -1814,6 +1900,323 @@ $("sideDelete").addEventListener("click", function () {
   chrome.storage.local.set({ sideRoutes: sideRoutes });
   paintSideRoutes();
 });
+
+
+
+ let isScrollFetching = false;
+
+document.querySelector(".listwrap").addEventListener("scroll", function (e) {
+  const el = e.target;
+  
+  if (middleMode === "item") {
+    if (isScrollFetching) return;
+
+    const scrollPercentage = (el.scrollTop + el.clientHeight) / el.scrollHeight;
+    
+    // Trigger when user scrolls past 95%
+    if (scrollPercentage >= 0.95) {
+      if (dtEnd < datetimeItems.length) {
+        isScrollFetching = true;
+        enforceSlidingWindow("down");
+        
+        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
+        // This drops the percentage below 95%, so it won't auto-trigger again 
+        // until the user actively scrolls down further.
+        setTimeout(() => {
+          el.scrollTop = el.scrollHeight * 0.85;
+          isScrollFetching = false;
+        }, 50);
+      }
+    } 
+    // Trigger when user scrolls near the top
+    else if (el.scrollTop <= 80) {
+      if (dtStart > 0) {
+        isScrollFetching = true;
+        enforceSlidingWindow("up");
+        
+        setTimeout(() => {
+          el.scrollTop += 150; // Nudge down slightly so it doesn't spam top triggers
+          isScrollFetching = false;
+        }, 50);
+      }
+    }
+  } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40 && shown < matched.length) {
+    renderSlice(false);
+  }
+});
+ 
+const MAX_WINDOW = 300; // Can safely handle small or large windows now
+
+function enforceSlidingWindow(direction) {
+  if (middleMode !== "item" || !datetimeItems.length) return;
+  const tb = $("dateTimeView");
+  const wrap = document.querySelector(".listwrap");
+  const tokens = parseSearch($("q").value).tokens;
+
+  if (datetimeItems.length <= MAX_WINDOW) {
+    if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
+      dtStart = 0;
+      dtEnd = datetimeItems.length;
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+    }
+    return;
+  }
+
+  if (direction === "down") {
+    if (dtEnd < datetimeItems.length) {
+      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+      // Enforce maximum window size by shifting dtStart forward if needed
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        dtStart = dtEnd - MAX_WINDOW;
+      }
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+    }
+  } else if (direction === "up") {
+    if (dtStart > 0) {
+      const beforeHeight = wrap ? wrap.scrollHeight : 0;
+      dtStart = Math.max(0, dtStart - DT_BATCH);
+      // Enforce maximum window size by shifting dtEnd backward if needed
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        dtEnd = dtStart + MAX_WINDOW;
+      }
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+    } else {
+      refreshDateTimeHead();
+      return;
+    }
+  }
+
+  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+}
+ 
+function enforceSlidingWindow_correct_bak(direction) {
+  if (middleMode !== "item" || !datetimeItems.length) return;
+  const tb = $("dateTimeView");
+  const wrap = document.querySelector(".listwrap");
+  const tokens = parseSearch($("q").value).tokens;
+
+  if (datetimeItems.length <= MAX_WINDOW) {
+    if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
+      dtStart = 0;
+      dtEnd = datetimeItems.length;
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+    }
+    return;
+  }
+
+  if (direction === "down") {
+    if (dtEnd < datetimeItems.length) {
+      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+      // Enforce maximum window size by shifting dtStart forward if needed
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        dtStart = dtEnd - MAX_WINDOW;
+      }
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+    }
+  } else if (direction === "up") {
+    if (dtStart > 0) {
+      const beforeHeight = wrap ? wrap.scrollHeight : 0;
+      dtStart = Math.max(0, dtStart - DT_BATCH);
+      // Enforce maximum window size by shifting dtEnd backward if needed
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        dtEnd = dtStart + MAX_WINDOW;
+      }
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+    } else {
+      refreshDateTimeHead();
+      return;
+    }
+  }
+
+  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+}
+ 
+
+function enforceSlidingWindow3(direction) {
+  if (middleMode !== "item" || !datetimeItems.length) return;
+  const tb = $("dateTimeView");
+  const wrap = document.querySelector(".listwrap");
+  const tokens = parseSearch($("q").value).tokens;
+
+  if (datetimeItems.length <= MAX_WINDOW) {
+    appendDateTimeBatch(direction);
+    return;
+  }
+
+  if (direction === "down") {
+    if (dtEnd < datetimeItems.length) {
+      const oldEnd = dtEnd;
+      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+      
+      // Append new batch to the bottom
+      const groups = groupItems(datetimeItems.slice(oldEnd, dtEnd));
+      let html = "";
+      groups.forEach(g => {
+        html += bannerRowHtml(g.session);
+        const ptt = g.items.map(it => pttAskNode({ localIndex: it.localIndex, ts: it.ts, text: it.text, recordKey: it.recordKey, answers: [] }, tokens, false, it.kind, g.convKey)).join("");
+        html += '<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>";
+      });
+      tb.insertAdjacentHTML("beforeend", html);
+
+      // Truncate from the top if we exceed MAX_WINDOW (remove group banner + cmt-row pairs)
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        const excess = (dtEnd - dtStart) - MAX_WINDOW;
+        // Approximate group removal from top
+        let removed = 0;
+        while (removed < excess && tb.children.length >= 2) {
+          const banner = tb.firstElementChild;
+          const cmt = banner ? banner.nextElementSibling : null;
+          if (banner) banner.remove();
+          if (cmt && cmt.classList.contains("cmt-row")) {
+            cmt.remove();
+            removed++;
+          }
+          dtStart++;
+        }
+      }
+    }
+  } else if (direction === "up") {
+    if (dtStart > 0) {
+      const oldStart = dtStart;
+      const nextStart = Math.max(0, dtStart - DT_BATCH);
+      const beforeHeight = wrap ? wrap.scrollHeight : 0;
+
+      const groups = groupItems(datetimeItems.slice(nextStart, oldStart));
+      let html = "";
+      groups.forEach(g => {
+        html += bannerRowHtml(g.session);
+        const ptt = g.items.map(it => pttAskNode({ localIndex: it.localIndex, ts: it.ts, text: it.text, recordKey: it.recordKey, answers: [] }, tokens, false, it.kind, g.convKey)).join("");
+        html += '<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>";
+      });
+      
+      tb.insertAdjacentHTML("afterbegin", html);
+      dtStart = nextStart;
+      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+
+      // Truncate from the bottom if we exceed MAX_WINDOW
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        const excess = (dtEnd - dtStart) - MAX_WINDOW;
+        let removed = 0;
+        while (removed < excess && tb.children.length >= 2) {
+          const cmt = tb.lastElementChild;
+          const banner = cmt ? cmt.previousElementSibling : null;
+          if (cmt) cmt.remove();
+          if (banner && banner.classList.contains("banner")) {
+            banner.remove();
+            removed++;
+          }
+          dtEnd--;
+        }
+      }
+    } else {
+      refreshDateTimeHead();
+      return;
+    }
+  }
+  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+}
+function enforceSlidingWindow2(direction) {
+  if (middleMode !== "item" || !datetimeItems.length) return;
+  const tb = $("dateTimeView");
+  const wrap = document.querySelector(".listwrap");
+  const tokens = parseSearch($("q").value).tokens;
+  
+  if (datetimeItems.length <= MAX_WINDOW) {
+    appendDateTimeBatch(direction);
+    return;
+  }
+
+  if (direction === "down") {
+    if (dtEnd < datetimeItems.length) {
+      const oldEnd = dtEnd;
+      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+      tb.insertAdjacentHTML("beforeend", datetimeRangeHtml(oldEnd, dtEnd, tokens));
+      
+      // Truncate from top if window exceeds max capacity
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        const removeCount = dtEnd - dtStart - MAX_WINDOW;
+        for (let i = 0; i < removeCount; i++) {
+          const firstGroup = tb.firstElementChild;
+          if (firstGroup) firstGroup.remove();
+        }
+        dtStart += removeCount;
+      }
+    }
+  } else if (direction === "up") {
+    if (dtStart > 0) {
+      const oldStart = dtStart;
+      const nextStart = Math.max(0, dtStart - DT_BATCH);
+      const beforeHeight = wrap ? wrap.scrollHeight : 0;
+      
+      tb.insertAdjacentHTML("afterbegin", datetimeRangeHtml(nextStart, oldStart, tokens));
+      dtStart = nextStart;
+      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+      
+      // Truncate from bottom if window exceeds max capacity
+      if (dtEnd - dtStart > MAX_WINDOW) {
+        const removeCount = dtEnd - dtStart - MAX_WINDOW;
+        dtEnd -= removeCount;
+        for (let i = 0; i < removeCount; i++) {
+          const lastGroup = tb.lastElementChild;
+          if (lastGroup) lastGroup.remove();
+        }
+      }
+    } else {
+      refreshDateTimeHead();
+    }
+  }
+  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+}
+function enforceSlidingWindow1(direction) {
+  if (middleMode !== "item" || !datetimeItems.length) return;
+  const tb = $("dateTimeView");
+  const wrap = document.querySelector(".listwrap");
+  const tokens = parseSearch($("q").value).tokens;
+
+  if (datetimeItems.length <= MAX_WINDOW) {
+    appendDateTimeBatch(direction);
+    return;
+  }
+
+  if (direction === "down" && dtEnd < datetimeItems.length) {
+    dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+    if (dtEnd - dtStart > MAX_WINDOW) {
+      dtStart = Math.max(0, dtEnd - MAX_WINDOW); // Truncate from top
+    }
+    tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+  } else if (direction === "up" && dtStart > 0) {
+    const beforeHeight = wrap ? wrap.scrollHeight : 0;
+    dtStart = Math.max(0, dtStart - DT_BATCH);
+    if (dtEnd - dtStart > MAX_WINDOW) {
+      dtEnd = Math.min(datetimeItems.length, dtStart + MAX_WINDOW); // Truncate from bottom
+    }
+    tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+    if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+  } else if (direction === "up" && dtStart === 0) {
+    refreshDateTimeHead();
+    return;
+  }
+
+  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Ctrl-hover popup: parent session, site, and exact hovered item information.
 (function initCtrlHoverChatInfo() {
