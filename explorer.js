@@ -934,6 +934,9 @@ function sortHits() {
 }
 
 function paintHits(tokens) {
+  // Keep hitList populated for Prev/Next Hit navigation, but do not render the
+  // lower pane while the user has explicitly invalidated it.
+  if ($("invalidateLowerPane") && $("invalidateLowerPane").checked) return;
   if (!delSort) sortHits();
   const tb = $("hitBody");
   tb.innerHTML = hitList.map(function (h, i) {
@@ -1640,6 +1643,31 @@ function bindColResize() {
 }
 bindColResize();
 
+(function bindInvalidateLowerPane() {
+  const checkbox = $("invalidateLowerPane");
+  if (!checkbox) return;
+  const split = $("hSplit");
+  const pane = $("hitsPane");
+  const storageKey = "aiChatExplorerInvalidateLowerPane";
+  function apply() {
+    const disabled = checkbox.checked;
+    if (split) split.style.display = disabled ? "none" : "";
+    if (pane) pane.style.display = disabled ? "none" : "";
+    if (disabled) $("hitBody").innerHTML = "";
+    else paintHits(parseSearch($("q").value).tokens);
+  }
+  try {
+    chrome.storage.local.get(storageKey, function (bag) {
+      checkbox.checked = bag[storageKey] === true;
+      apply();
+    });
+  } catch (_) { apply(); }
+  checkbox.addEventListener("change", function () {
+    apply();
+    try { chrome.storage.local.set({ [storageKey]: checkbox.checked }); } catch (_) {}
+  });
+})();
+
 (function bindHSplit() {
   const split = $("hSplit");
   const pane = $("hitsPane");
@@ -1786,3 +1814,115 @@ $("sideDelete").addEventListener("click", function () {
   chrome.storage.local.set({ sideRoutes: sideRoutes });
   paintSideRoutes();
 });
+
+// Ctrl-hover popup: parent session, site, and exact hovered item information.
+(function initCtrlHoverChatInfo() {
+  const popup = document.createElement("div");
+  popup.id = "ctrlHoverChatInfo";
+  Object.assign(popup.style, {
+    position: "fixed", zIndex: "99999", display: "none",
+    maxWidth: "min(560px, calc(100vw - 24px))",
+    maxHeight: "min(70vh, calc(100vh - 24px))", overflow: "auto",
+    padding: "9px 12px", border: "1px solid #777", borderRadius: "5px",
+    background: "#fffbe6", color: "#222", boxShadow: "0 2px 8px rgba(0,0,0,.28)",
+    font: '13px/1.4 "Segoe UI", Tahoma, sans-serif',
+    whiteSpace: "normal", overflowWrap: "anywhere", pointerEvents: "none"
+  });
+  const lines = {};
+  function addLine(key, strong) {
+    const line = document.createElement("div");
+    if (strong) line.style.fontWeight = "700";
+    lines[key] = line;
+    popup.appendChild(line);
+  }
+  addLine("session", true); addLine("chatId", false); addLine("site", false); addLine("siteUrl", false);
+  const separator = document.createElement("div");
+  separator.textContent = "────────────────────────";
+  separator.style.color = "#aaa";
+  popup.appendChild(separator);
+  addLine("itemTitle", true); addLine("itemText", false); addLine("kind", false);
+  addLine("nid", false); addLine("convKey", false); addLine("recordKey", false);
+  document.body.appendChild(popup);
+
+  let lastX = 0, lastY = 0, lastItemKey = null;
+  function findSession(convKey) {
+    if (!convKey) return null;
+    for (const source of [matched, rows, recycleChats]) {
+      const session = source.find((item) => item && item.convKey === convKey);
+      if (session) return session;
+    }
+    return null;
+  }
+  function setLine(key, label, value) {
+    lines[key].textContent = label + ": " + (value == null || value === "" ? "(not available)" : String(value));
+  }
+  function findItemRecord(convKey, nid) {
+    if (!convKey || !nid) return null;
+    for (const ask of viewAsks(convKey)) {
+      const askKind = isOnMsg(ask) ? "onMsg" : "ask";
+      if (askKind + "-" + (ask.recordKey || ask.localIndex) === nid) {
+        return { kind: askKind, recordKey: ask.recordKey, text: ask.text, localIndex: ask.localIndex };
+      }
+      for (const answer of (ask.answers || [])) {
+        if ("ans-" + (answer.recordKey || answer.localIndex) === nid) {
+          return { kind: "answer", recordKey: answer.recordKey, text: answer.text, localIndex: answer.localIndex };
+        }
+      }
+    }
+    return null;
+  }
+  function hide() { popup.style.display = "none"; lastItemKey = null; }
+  function position(x, y) {
+    const gap = 14;
+    popup.style.left = "0px"; popup.style.top = "0px";
+    const rect = popup.getBoundingClientRect();
+    let left = x + gap, top = y + gap;
+    if (left + rect.width > window.innerWidth - 8) left = x - rect.width - gap;
+    if (top + rect.height > window.innerHeight - 8) top = y - rect.height - gap;
+    popup.style.left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8)) + "px";
+    popup.style.top = Math.max(8, Math.min(top, window.innerHeight - rect.height - 8)) + "px";
+  }
+  function updateFromPoint(x, y, ctrlHeld) {
+    lastX = x; lastY = y;
+    if (!ctrlHeld) { hide(); return; }
+    const target = document.elementFromPoint(x, y);
+    const wrap = target && target.closest(".listwrap");
+    const item = wrap && target.closest(".ptt-node[data-ck], tr.item-row[data-ck]");
+    if (!item) { hide(); return; }
+    const nid = item.dataset.nid || "";
+    const convKey = item.dataset.ck || (nid && nidToConvKey.get(nid));
+    const session = findSession(convKey);
+    if (!session) { hide(); return; }
+    const itemKey = convKey + "\n" + nid;
+    if (lastItemKey !== itemKey) {
+      const record = findItemRecord(convKey, nid);
+      let domText = "";
+      if (item.matches("tr.item-row")) {
+        const cell = item.cells && item.cells[2];
+        domText = cell ? cell.textContent.trim() : item.textContent.trim();
+      } else {
+        const textNode = item.querySelector(":scope > .ptt-row > .ptt-txt");
+        domText = textNode ? textNode.textContent.trim() : "";
+      }
+      const kind = record ? record.kind : (nid.split("-")[0] || "item");
+      setLine("session", "Chat session", session.title || "(no title)");
+      setLine("chatId", "Chat ID", session.conversationId || session.url);
+      setLine("site", "Site", session.platform);
+      setLine("siteUrl", "Site URL", session.url);
+      setLine("itemTitle", "Hovered item", kind === "answer" ? "Answer" : kind === "onMsg" ? "Ask / message" : "Ask");
+      setLine("itemText", "Item text", record && record.text != null ? record.text : domText);
+      setLine("kind", "Type", kind);
+      setLine("nid", "NID", nid);
+      setLine("convKey", "convKey", convKey);
+      setLine("recordKey", "recordKey", record && record.recordKey);
+      lastItemKey = itemKey;
+    }
+    popup.style.display = "block";
+    position(x, y);
+  }
+  document.addEventListener("mousemove", (event) => updateFromPoint(event.clientX, event.clientY, event.ctrlKey), true);
+  document.addEventListener("keydown", (event) => { if (event.key === "Control" && !event.repeat) updateFromPoint(lastX, lastY, true); }, true);
+  document.addEventListener("keyup", (event) => { if (event.key === "Control") hide(); }, true);
+  window.addEventListener("blur", hide);
+})();
+
