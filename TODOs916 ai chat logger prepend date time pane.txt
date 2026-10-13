@@ -17,12 +17,9 @@ if one of the text bars is empty , that means its val is zero .
 "search only in records that contains lines equal or more than [  ] "   "search only in records that contains lines equal or less  than [  ] "   
 ----- for these 4 checkboxes , if each ' s val is empty , that means ignore this condition. 
 
+-----( for all the above checkboxes , use some breviary for the text that by its side. )
 
-
-
-------( for all the above checkboxes , use some breviary for the text that by its side. )
-
-
+4. let the calendar from ... to , both precise to time , not only date,
 
 ----------------------------------------------------------------------------
 

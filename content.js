@@ -399,54 +399,102 @@
   // --------------------------------------------------
   // 1. Find the current editable text bar
   // --------------------------------------------------
-  function findComposer() {
-    const selectors = [
-      "#prompt-textarea",
-      '[data-testid="composer-text-input"]',
-      'textarea[placeholder]',
-      '[contenteditable="true"][role="textbox"]',
-      '[contenteditable="true"]',
-      'textarea',
-      '[role="textbox"]'
+
+function findComposer() {
+  const isChatGPT =
+    location.hostname === "chatgpt.com" ||
+    location.hostname === "chat.openai.com";
+
+  // --------------------------------------------------
+  // ChatGPT: locate the composer relative to Send button
+  // --------------------------------------------------
+  if (isChatGPT) {
+    const isEditable = (el) =>
+      el instanceof HTMLTextAreaElement ||
+      el instanceof HTMLInputElement ||
+      el.isContentEditable;
+
+    const isVisible = (el) => {
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+
+      return (
+        r.width > 0 &&
+        r.height > 0 &&
+        s.display !== "none" &&
+        s.visibility !== "hidden"
+      );
+    };
+
+    // Find the Send button, not arbitrary page buttons.
+    const buttons = [
+      ...document.querySelectorAll(
+        'button[data-testid*="send"],' +
+        'button[aria-label*="Send" i],' +
+        'button[aria-label*="Send" i] [role="button"]'
+      )
     ];
 
-    for (const selector of selectors) {
-      const elements = document.querySelectorAll(selector);
+    const sendButton = buttons.find((el) => {
+      const btn = el.closest("button") || el;
 
-      for (const el of elements) {
-        if (!(el instanceof HTMLElement)) continue;
+      return (
+        btn instanceof HTMLElement &&
+        isVisible(btn) &&
+        !btn.disabled
+      );
+    });
 
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
+    if (!sendButton) return null;
 
-        if (
-          rect.width > 0 &&
-          rect.height > 0 &&
-          style.display !== "none" &&
-          style.visibility !== "hidden"
-        ) {
-          return el;
-        }
-      }
-    }
+    // Walk upward from the Send button. At each level,
+    // find editable elements in that container and choose
+    // the one nearest to the button.
+    let node = sendButton.parentElement;
 
-    // Fallback: currently focused editable element
-    const active = document.activeElement;
-
-    if (
-      active instanceof HTMLElement &&
-      (
-        active.isContentEditable ||
-        active.tagName === "TEXTAREA" ||
-        active.tagName === "INPUT"
-      )
+    while (
+      node &&
+      node !== document.body &&
+      node !== document.documentElement
     ) {
-      return active;
+      const candidates = [
+        ...node.querySelectorAll(
+          '[contenteditable="true"], textarea, input'
+        )
+      ].filter((el) =>
+        isEditable(el) &&
+        isVisible(el) &&
+        !el.closest("#peek-box")
+      );
+
+      if (candidates.length) {
+        const b = sendButton.getBoundingClientRect();
+        const bx = b.left + b.width / 2;
+        const by = b.top + b.height / 2;
+
+        candidates.sort((a, b) => {
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+
+          const da =
+            (bx - Math.max(ra.left, Math.min(bx, ra.right))) ** 2 +
+            (by - Math.max(ra.top, Math.min(by, ra.bottom))) ** 2;
+
+          const db =
+            (bx - Math.max(rb.left, Math.min(bx, rb.right))) ** 2 +
+            (by - Math.max(rb.top, Math.min(by, rb.bottom))) ** 2;
+
+          return da - db;
+        });
+
+        return candidates[0];
+      }
+
+      node = node.parentElement;
     }
 
     return null;
   }
-
   // --------------------------------------------------
   // 2. Read text from the editable element
   // --------------------------------------------------
