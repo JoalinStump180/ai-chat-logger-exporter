@@ -604,6 +604,30 @@ function datetimeRangeHtml(start, end, tokens) {
   return html.join("");
 }
 
+// Update the sliding window while retaining DOM identity for items that remain
+// in the window. Group/banner rows are regenerated, but matching .ptt-node
+// elements (and their current classes/state) are moved into the new tree.
+function renderDateTimeRangePreservingItems(tb, start, end, tokens) {
+  const oldNodes = new Map();
+  tb.querySelectorAll(".ptt-node[data-nid]").forEach(function (node) {
+    const nid = node.getAttribute("data-nid");
+    if (nid && !oldNodes.has(nid)) oldNodes.set(nid, node);
+  });
+
+  // Build the new outer group structure off-DOM first.
+  const next = document.createElement("tbody");
+  next.innerHTML = datetimeRangeHtml(start, end, tokens);
+
+  // Replace newly-created item nodes with the existing objects when their IDs
+  // still belong to the window. Moving a node preserves its object identity.
+  next.querySelectorAll(".ptt-node[data-nid]").forEach(function (newNode) {
+    const oldNode = oldNodes.get(newNode.getAttribute("data-nid"));
+    if (oldNode) newNode.replaceWith(oldNode);
+  });
+
+  tb.replaceChildren(...Array.from(next.childNodes));
+}
+
 function buildDateTimeItems(tokens) {
   datetimeItems = collectItems(matched, tokens);
   // collectItems already sorts newest-to-oldest across every conversation.
@@ -1946,8 +1970,13 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
 });
  
 const MAX_WINDOW = 300; // Can safely handle small or large windows now
-
+ 
 function enforceSlidingWindow(direction) {
+
+
+  //if (isSliding) return;
+ 
+
   if (middleMode !== "item" || !datetimeItems.length) return;
   const tb = $("dateTimeView");
   const wrap = document.querySelector(".listwrap");
@@ -1957,7 +1986,7 @@ function enforceSlidingWindow(direction) {
     if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
       dtStart = 0;
       dtEnd = datetimeItems.length;
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      renderDateTimeRangePreservingItems(tb, dtStart, dtEnd, tokens);
     }
     return;
   }
@@ -1969,7 +1998,7 @@ function enforceSlidingWindow(direction) {
       if (dtEnd - dtStart > MAX_WINDOW) {
         dtStart = dtEnd - MAX_WINDOW;
       }
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      renderDateTimeRangePreservingItems(tb, dtStart, dtEnd, tokens);
     }
   } else if (direction === "up") {
     if (dtStart > 0) {
@@ -1979,7 +2008,7 @@ function enforceSlidingWindow(direction) {
       if (dtEnd - dtStart > MAX_WINDOW) {
         dtEnd = dtStart + MAX_WINDOW;
       }
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      renderDateTimeRangePreservingItems(tb, dtStart, dtEnd, tokens);
       if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
     } else {
       refreshDateTimeHead();
@@ -1988,6 +2017,15 @@ function enforceSlidingWindow(direction) {
   }
 
   $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+  
+  
+   isSliding = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        isSliding = false;
+        console.log("--> rAF reached: isSliding is now   == ",isSliding);
+      });
+    });
 }
  
 function enforceSlidingWindow_correct_bak(direction) {
