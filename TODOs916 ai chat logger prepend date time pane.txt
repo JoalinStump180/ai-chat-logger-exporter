@@ -1,5 +1,7 @@
 TODO:
 
+
+
 0.      for very long item text , for better dispaly , add 2 little text bar/s [  m ]   [ n  ] that accept an integer val in the top banner , that control if using ¡°Read more / Show less¡±
 when using  Read more / Show less¡± mode,, for each item , if its count of lines exceed 'm+n' default view is in folded mode
 and in each item that  count of lines exceed 'm+n'  , under the position of onMsg#/ask#/ans#  , display  a underline text 'Read more' when the text is in folded mode, or 'Show less' when the text is in un folded mode,
@@ -21,7 +23,15 @@ if one of the text bars is empty , that means its val is zero .
 
 4. let the calendar from ... to , both precise to time , not only date,
 
+
+5. disable the pageup handler 
+6.  in the recycle , add , for the 3-dots menu a new option: recover. to  let the recycle can recover item to their original place. 
 ----------------------------------------------------------------------------
+
+
+
+7.  beside onMsg /ask /ans path , add a 4th 'onHand' path manually add an 'onHand' item ; and also can insert any child to it , say the child 's name  'onHand#1.1' to 'onHand#1'
+
 
 
 
