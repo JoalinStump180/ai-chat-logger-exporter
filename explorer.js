@@ -1,4 +1,4 @@
-
+﻿
 
 const nidToConvKey = new Map(); // Maps every node ID directly to its exact convKey
 
@@ -2086,7 +2086,7 @@ document.querySelector(".side").addEventListener("contextmenu", function (e) {
 });
 // YouTube-style copy behavior: when a user selects text in a folded message,
 // Ctrl+C copies the canonical full message text rather than only the visible preview.
-document.addEventListener("copy", function (e) {
+if (0) document.addEventListener("copy", function (e) {
   const selection = window.getSelection && window.getSelection();
   if (!selection || selection.isCollapsed || !e.clipboardData) return;
 

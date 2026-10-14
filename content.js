@@ -44,10 +44,11 @@
   let settings = { showStamps: true, logAsks: true, logSeenAsks: true, logSeenAnswers: true, showSeenDebug: true };
 
   // --------------------------------------------------
-  // Snapshot state (v1.4 idea)
+  // v1.5 state (no text polling)
   // --------------------------------------------------
+  let lastActiveComposer = null;
   let lastComposerText = "";
-  let lastComposerEl = null;
+  let mousedownText = "";          // filled on mousedown, used by Send
 
   chrome.storage.local.get(["showStamps", "logAsks", "logSeenAsks", "logSeenAnswers", "showSeenDebug"], (bag) => {
     settings.showStamps = bag.showStamps !== false;
@@ -399,7 +400,7 @@
   }
 
   // --------------------------------------------------
-  // Composer finding + snapshot (merged from v1.4)
+  // Composer helpers (v1.5 style)
   // --------------------------------------------------
   function isVisible(el) {
     if (!(el instanceof HTMLElement)) return false;
@@ -414,18 +415,14 @@
 
   function getSendButton() {
     const selectors = [
-      // ChatGPT
       'button[data-testid*="send"]',
       'button[aria-label*="Send" i]',
-      // Grok
       'button[aria-label="Submit"]',
       'button[aria-label="Send"]',
       'button[data-testid="chat-submit"]',
       'button[data-testid="grokSendButton"]',
       'button[data-testid*="submit"]',
-      // Gemini / generic
-      'button[type="submit"]',
-      'button[aria-label*="Send" i]'
+      'button[type="submit"]'
     ];
     for (const sel of selectors) {
       const candidates = [...document.querySelectorAll(sel)];
@@ -439,6 +436,10 @@
   }
 
   function findComposer() {
+    if (lastActiveComposer && isVisible(lastActiveComposer) && isEditable(lastActiveComposer)) {
+      return lastActiveComposer;
+    }
+
     const sendButton = getSendButton();
     if (sendButton) {
       let node = sendButton.parentElement;
@@ -466,7 +467,6 @@
       }
     }
 
-    // Platform fallbacks
     const selectors = {
       chatgpt: ["#prompt-textarea", '[data-testid="composer-text-input"]', 'textarea[placeholder*="Ask"]'],
       gemini: ["rich-textarea .ql-editor", '[aria-label="Enter a prompt here"]', '[contenteditable="true"]'],
@@ -493,37 +493,37 @@
     return (el.innerText || el.textContent || "").replace(/\u00a0/g, " ");
   }
 
-  function snapshot() {
-    const el = findComposer();
-    if (el) {
-      lastComposerEl = el;
-      lastComposerText = getComposerText(el);
-    }
-    return lastComposerText;
-  }
+  function attachComposerListeners(el) {
+    if (!el || el._dbgAttached) return;
+    el._dbgAttached = true;
 
-  function attachInputListener(el) {
-    if (!el || el._snapAttached) return;
-    el._snapAttached = true;
+    el.addEventListener("focus", () => {
+      lastActiveComposer = el;
+    });
+
     el.addEventListener("input", () => {
+      lastActiveComposer = el;
       lastComposerText = getComposerText(el);
-      lastComposerEl = el;
+    });
+
+    // Re-read after paste
+    el.addEventListener("paste", () => {
+      lastActiveComposer = el;
+      setTimeout(() => {
+        lastComposerText = getComposerText(el);
+      }, 50);
     });
   }
 
-  setInterval(() => {
+  function ensureComposerAttached() {
     const el = findComposer();
-    if (el) {
-      attachInputListener(el);
-      if (el !== lastComposerEl) {
-        lastComposerEl = el;
-        lastComposerText = getComposerText(el);
-      }
-    }
-  }, 250);
+    if (el) attachComposerListeners(el);
+  }
+  ensureComposerAttached();
+  setInterval(ensureComposerAttached, 1000);
 
   // --------------------------------------------------
-  // Logging helper (shared by Enter + Send)
+  // logAsk (called only from Enter and Send)
   // --------------------------------------------------
   function logAsk(text, source) {
     text = normalizeAsk(text);
@@ -546,11 +546,22 @@
   }
 
   // --------------------------------------------------
-  // Enter key (uses snapshot)
+  // mousedown: only store text, do NOT call logAsk
+  // --------------------------------------------------
+  document.addEventListener("mousedown", (e) => {
+    const el = (lastActiveComposer && isVisible(lastActiveComposer))
+      ? lastActiveComposer
+      : findComposer();
+    mousedownText = el ? getComposerText(el) : "";
+    // intentionally no logAsk here
+  }, true);
+
+  // --------------------------------------------------
+  // Enter key → logAsk
   // --------------------------------------------------
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-    const el = findComposer();
+    const el = lastActiveComposer || findComposer();
     if (!el) return;
     const target = e.target;
     if (!(target instanceof Node)) return;
@@ -561,7 +572,7 @@
   }, true);
 
   // --------------------------------------------------
-  // Send / Submit button click (uses snapshot)
+  // Send / Submit click → logAsk (prefers mousedownText)
   // --------------------------------------------------
   document.addEventListener("click", (e) => {
     const path = e.composedPath ? e.composedPath() : [e.target];
@@ -586,25 +597,439 @@
     });
     if (!isSend) return;
 
-    const text = lastComposerText || snapshot();
+    const text = mousedownText || lastComposerText || getComposerText(findComposer());
     logAsk(text, "send");
   }, true);
 
   // --------------------------------------------------
-  // Rest of original file (stamps, seen logging, etc.)
+  // Restored from v0.3.7: stamps schedule + SEEN_ONLINE (ask/ans) path
   // --------------------------------------------------
-  // (The original stampAll, seen logging, fetch functions, and message listeners
-  //  remain unchanged below this point. They continue to work as before.)
-
-  // Placeholder for the remaining original logic that was truncated in the input.
-  // In a full merge you would paste the rest of the original file here,
-  // starting from the seenLogged / firstWalkBubbles section onward.
-  // The snapshot + Enter/Send listeners above are the new pieces.
-
+  let scheduled = false;
   function schedule() {
-    // original schedule function placeholder — keep your existing one
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      stampAll();
+    });
+  }
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+  schedule();
+  setInterval(schedule, 1500);
+  window.addEventListener("resize", schedule);
+
+  function sessionUrl(id) {
+    if (id && location.pathname.includes(id)) return location.href;
+    if (platform === "grok") return location.origin + "/c/" + id;
+    if (platform === "chatgpt") return location.origin + "/c/" + id;
+    if (platform === "gemini") return location.origin + "/app/" + id;
+    return location.href;
   }
 
-  // Initial snapshot
-  snapshot();
+  function cleanTitle(raw) {
+    return String(raw || "")
+      .replace(/\s+[-|–—]\s+(Grok|ChatGPT|Gemini|Google Gemini)\s*$/i, "")
+      .trim();
+  }
+
+  const seenLogged = new Set();
+  const seenLast = new Map();
+  let seenLastScan = -1;
+
+  function bubbleBody(el, role) {
+    if (role !== "user") {
+      const md = el.querySelector(".response-content-markdown, .markdown");
+      if (md) return messageText(md);
+    }
+    return messageText(el).replace(/^worked for \d+s\s*/i, "");
+  }
+
+  function geminiTurnId(el) {
+    const marked = el.querySelector("[id^='message-content-id-r_'], [id^='model-response-message-contentr_']");
+    const markedId = marked && marked.id || "";
+    const fromMark = markedId.match(/r_([0-9a-f]{8,})/i);
+    if (fromMark) return "r_" + fromMark[1];
+    let n = el;
+    for (let i = 0; i < 12 && n; i++) {
+      if (/^[0-9a-f]{8,}$/i.test(n.id || "") && n.id !== "chat-history") return "r_" + n.id;
+      const inner = n.querySelector && n.querySelector("[id^='message-content-id-r_']");
+      if (inner) {
+        const m = inner.id.match(/r_([0-9a-f]{8,})/i);
+        if (m) return "r_" + m[1];
+      }
+      n = n.parentElement;
+    }
+    return "";
+  }
+
+  function domTurnId(el) {
+    const wrap = el.closest && el.closest("[id^='response-']");
+    if (wrap && /^response-[0-9a-f-]{8,}$/i.test(wrap.id || "")) return wrap.id.slice("response-".length);
+    let n = el;
+    for (let i = 0; i < 12 && n; i++) {
+      const raw = n.id || "";
+      if (/^response-[0-9a-f-]{8,}$/i.test(raw)) return raw.slice("response-".length);
+      const mid = n.getAttribute && n.getAttribute("data-message-id") || "";
+      if (mid.length > 4) return mid;
+      n = n.parentElement;
+    }
+    return "";
+  }
+
+  function firstWalkBubbles() {
+    const out = [];
+    const push = (el, role) => {
+      const text = bubbleBody(el, role);
+      if (!text) return;
+      out.push({ role, uid: domTurnId(el), text });
+    };
+    const take = (userSel, ansSel) => {
+      document.querySelectorAll(userSel).forEach((el) => push(el, "user"));
+      document.querySelectorAll(ansSel).forEach((el) => push(el, "assistant"));
+    };
+    if (platform === "grok") {
+      document.querySelectorAll("[data-testid='chat-transcript-scroller'] div[id^='response-']").forEach((wrap) => {
+        if (!/^response-[0-9a-f-]{8,}$/i.test(wrap.id || "")) return;
+        const uid = wrap.id.slice("response-".length);
+        const user = wrap.querySelector("[data-testid='user-message']");
+        const ans = wrap.querySelector("[data-testid='assistant-message']");
+        const el = user || ans;
+        if (!el) return;
+        const md = el.querySelector(".response-content-markdown, .markdown, p");
+        const text = messageText(md || el).replace(/^worked for \d+s\s*/i, "");
+        if (!text) return;
+        out.push({ role: user ? "user" : "assistant", uid, text });
+      });
+      // fallback if the scroller structure is missing
+      if (!out.length) take('[data-message-author-role="user"]', '[data-message-author-role="assistant"]');
+    } else if (platform === "chatgpt") {
+      take('[data-message-author-role="user"]', '[data-message-author-role="assistant"]');
+    } else if (platform === "gemini") {
+      document.querySelectorAll("user-query").forEach((el) => {
+        const uid = geminiTurnId(el);
+        const text = messageText(el);
+        if (uid && text) out.push({ role: "user", uid, text });
+      });
+      document.querySelectorAll("model-response").forEach((el) => {
+        const body = el.querySelector("message-content, model-response-content, .model-response-text") || el;
+        const uid = geminiTurnId(el);
+        const text = messageText(body);
+        if (uid && text) out.push({ role: "assistant", uid, text });
+      });
+    }
+    return out;
+  }
+
+  function seenPrefix(ts) {
+    const d = new Date(ts);
+    const z = (n) => String(n).padStart(2, "0");
+    if (!Number.isFinite(ts) || Number.isNaN(d.getTime())) return "SEEN_ONLINE: ";
+    return "SEEN_ONLINE: " + d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + " " + z(d.getHours()) + ":" + z(d.getMinutes()) + ":" + z(d.getSeconds()) + " ";
+  }
+
+  function seenDebug(line) {
+    let box = document.getElementById("ai-seen-debug");
+    if (!settings.showSeenDebug) {
+      if (box) box.remove();
+      return;
+    }
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "ai-seen-debug";
+      box.style.cssText = "position:fixed;top:72px;right:12px;z-index:2147483646;width:460px;max-height:46vh;overflow:auto;background:rgba(12,16,24,.62);color:#f2f2f2;font:12px/1.45 Consolas,monospace;padding:8px 10px;border:1px solid rgba(255,255,255,.25);border-radius:8px;";
+      const bar = document.createElement("div");
+      bar.textContent = "seen debug (drag)";
+      bar.style.cssText = "cursor:move;font-weight:600;margin-bottom:6px;";
+      const pre = document.createElement("pre");
+      pre.id = "ai-seen-debug-log";
+      pre.style.cssText = "margin:0;white-space:pre-wrap;";
+      box.appendChild(bar);
+      box.appendChild(pre);
+      document.documentElement.appendChild(box);
+      let drag = false, dx = 0, dy = 0;
+      bar.addEventListener("mousedown", (e) => { drag = true; dx = e.clientX - box.offsetLeft; dy = e.clientY - box.offsetTop; });
+      window.addEventListener("mousemove", (e) => {
+        if (!drag) return;
+        box.style.left = (e.clientX - dx) + "px";
+        box.style.top = (e.clientY - dy) + "px";
+        box.style.right = "auto";
+      });
+      window.addEventListener("mouseup", () => { drag = false; });
+    }
+    const pre = document.getElementById("ai-seen-debug-log");
+    if (pre) pre.textContent = (line + "\n" + pre.textContent).slice(0, 5000);
+  }
+
+  function postSeen(convId, role, responseId, text, ts, ask) {
+    chrome.runtime.sendMessage({
+      type: "log-seen",
+      platform,
+      conversationId: convId,
+      responseId,
+      role,
+      text,
+      ts,
+      url: sessionUrl(convId),
+      title: titledWithAccount(cleanTitle(document.title), detectAccount()),
+      account: detectAccount(),
+      askResponseId: ask && ask.responseId || "",
+      askText: ask ? (seenPrefix(ask.ts) + (ask.text || "")) : "",
+      askTs: ask && ask.ts || 0
+    }, (res) => {
+      if (chrome.runtime.lastError) {
+        seenDebug("error " + role + " " + responseId + " " + chrome.runtime.lastError.message);
+        return;
+      }
+      const added = res && res.added;
+      seenDebug((added ? "recorded " : "skipped existing ") + role + " " + responseId + " " + String(text || "").slice(0, 80));
+    });
+  }
+
+  async function logSeenBubbles() {
+    if (!settings.logSeenAsks && !settings.logSeenAnswers) {
+      seenDebug("seen checkboxes off");
+      return;
+    }
+    const convId = getConversationId();
+    if (!convId) {
+      seenDebug("no conversation id " + location.pathname);
+      return;
+    }
+    const bubbles = firstWalkBubbles();
+    if (seenLastScan !== bubbles.length) {
+      seenLastScan = bubbles.length;
+      seenDebug("scan " + platform + " bubbles=" + bubbles.length + " " + location.pathname);
+    }
+    if (!bubbles.length) return;
+    // Pure DOM path used by the three main platforms in 0.3.7
+    let lastAsk = null;
+    for (const b of bubbles) {
+      if (b.role === "user") lastAsk = b;
+      const key = convId + "|" + b.role + "|" + b.uid;
+      if (!b.uid || seenLogged.has(key)) continue;
+      const wantAsk = b.role === "user" && settings.logSeenAsks;
+      const wantAns = b.role !== "user" && settings.logSeenAnswers;
+      if (!wantAsk && !wantAns) continue;
+      if (b.role !== "user") {
+        const prev = seenLast.get(key);
+        seenLast.set(key, b.text);
+        if (prev == null) continue;
+        const ts = Date.now();
+        const prefix = seenPrefix(ts) + (prev !== b.text ? "MAY_INCOMPLETE " : "");
+        seenLogged.add(key);
+        postSeen(convId, b.role, b.uid, prefix + b.text, ts, lastAsk && { responseId: lastAsk.uid, text: lastAsk.text, ts });
+        continue;
+      }
+      const ts = Date.now();
+      seenLogged.add(key);
+      postSeen(convId, "user", b.uid, seenPrefix(ts) + b.text, ts, null);
+    }
+  }
+
+  setInterval(() => {
+    logSeenBubbles();
+  }, 800);
+
+
+  // --------------------------------------------------
+  // Manual sync: list / fetch sessions (restored from 0.3.7)
+  // --------------------------------------------------
+  function grokRoleOf(sender) {
+    const s = String(sender || "").toLowerCase();
+    if (s === "human" || s === "user") return "user";
+    if (s === "assistant" || s === "bot" || s === "grok") return "assistant";
+    return s || "unknown";
+  }
+
+  async function listGrokSessions(limit) {
+    const out = [];
+    let pageToken;
+    while (out.length < limit) {
+      const url = new URL("https://grok.com/rest/app-chat/conversations");
+      url.searchParams.set("pageSize", String(Math.min(30, limit - out.length)));
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
+      if (!res.ok) throw new Error("grok list " + res.status);
+      const data = await res.json();
+      for (const c of data.conversations || []) {
+        if (!c.conversationId) continue;
+        out.push({
+          id: c.conversationId,
+          title: c.title || "(untitled)",
+          createdAt: c.createTime || "",
+          updatedAt: c.modifyTime || "",
+          url: "https://grok.com/c/" + c.conversationId
+        });
+        if (out.length >= limit) break;
+      }
+      pageToken = data.nextPageToken || undefined;
+      if (!pageToken) break;
+    }
+    return out;
+  }
+
+  async function fetchGrokTurns(id) {
+    const enc = encodeURIComponent(id);
+    const opt = { credentials: "include", headers: { accept: "application/json" } };
+    const detailRes = await fetch("https://grok.com/rest/app-chat/conversations_v2/" + enc, opt);
+    if (!detailRes.ok) throw new Error("conversations_v2 " + detailRes.status);
+    const detail = await detailRes.json();
+    const nodeRes = await fetch("https://grok.com/rest/app-chat/conversations/" + enc + "/response-node", opt);
+    if (!nodeRes.ok) throw new Error("response-node " + nodeRes.status);
+    const nodes = ((await nodeRes.json()).responseNodes || []);
+    const responseIds = [...new Set(nodes.map((n) => n.responseId).filter(Boolean))];
+    const loadRes = await fetch("https://grok.com/rest/app-chat/conversations/" + enc + "/load-responses", {
+      method: "POST",
+      credentials: "include",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ responseIds })
+    });
+    if (!loadRes.ok) throw new Error("load-responses " + loadRes.status);
+    const loaded = await loadRes.json();
+    const byId = new Map((loaded.responses || []).map((r) => [r.responseId, r]));
+    const turns = [];
+    for (const rid of responseIds) {
+      const r = byId.get(rid);
+      if (!r) continue;
+      const text = String(r.message || "").trim();
+      if (!text) continue;
+      const created = r.createTime ? Date.parse(r.createTime) : Date.now();
+      turns.push({
+        role: grokRoleOf(r.sender),
+        text,
+        responseId: rid,
+        ts: Number.isFinite(created) ? created : Date.now()
+      });
+    }
+    const conv = detail.conversation || detail || {};
+    return {
+      title: conv.title || document.title,
+      url: "https://grok.com/c/" + id,
+      turns
+    };
+  }
+
+  async function listChatGPTSessions(limit) {
+    const sess = await fetch("https://chatgpt.com/api/auth/session", {
+      credentials: "include",
+      headers: { accept: "application/json" }
+    }).then((r) => r.json());
+    const token = sess && sess.accessToken;
+    if (!token) throw new Error("chatgpt no session token");
+    const out = [];
+    let offset = 0;
+    while (out.length < limit) {
+      const url = new URL("https://chatgpt.com/backend-api/conversations");
+      url.searchParams.set("offset", String(offset));
+      url.searchParams.set("limit", String(Math.min(28, limit - out.length)));
+      url.searchParams.set("order", "updated");
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: { accept: "application/json", authorization: "Bearer " + token }
+      });
+      if (!res.ok) throw new Error("chatgpt list " + res.status);
+      const data = await res.json();
+      const items = data.items || [];
+      for (const it of items) {
+        if (!it.id) continue;
+        out.push({
+          id: it.id,
+          title: it.title || "(untitled)",
+          createdAt: it.create_time || "",
+          updatedAt: it.update_time || "",
+          url: "https://chatgpt.com/c/" + it.id
+        });
+        if (out.length >= limit) break;
+      }
+      if (!items.length) break;
+      offset += items.length;
+    }
+    return { token, out };
+  }
+
+  function chatgptMessageText(msg) {
+    const content = msg && msg.content;
+    if (!content) return "";
+    if (typeof content === "string") return content;
+    const parts = content.parts || [];
+    return parts.map((p) => (typeof p === "string" ? p : (p && p.text) || "")).join("\n");
+  }
+
+  async function fetchChatGPTTurns(id, token) {
+    const res = await fetch("https://chatgpt.com/backend-api/conversation/" + encodeURIComponent(id), {
+      credentials: "include",
+      headers: { accept: "application/json", authorization: "Bearer " + token }
+    });
+    if (!res.ok) throw new Error("chatgpt conversation " + res.status);
+    const data = await res.json();
+    const mapping = data.mapping || {};
+    const turns = [];
+    const nodes = Object.values(mapping);
+    nodes.sort((a, b) => {
+      const ta = (a.message && a.message.create_time) || 0;
+      const tb = (b.message && b.message.create_time) || 0;
+      return ta - tb;
+    });
+    for (const node of nodes) {
+      const msg = node && node.message;
+      if (!msg) continue;
+      const role = msg.author && msg.author.role;
+      if (role !== "user" && role !== "assistant") continue;
+      const text = chatgptMessageText(msg).trim();
+      if (!text) continue;
+      turns.push({
+        role,
+        text,
+        responseId: msg.id || node.id || "",
+        ts: msg.create_time ? Math.round(msg.create_time * 1000) : Date.now()
+      });
+    }
+    return { title: data.title || document.title, url: "https://chatgpt.com/c/" + id, turns };
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+    if (!msg || !msg.type) return;
+    if (msg.type === "list-sessions") {
+      (async () => {
+        const to = msg.to || 10;
+        if (platform === "grok") {
+          const rows = await listGrokSessions(to);
+          sendResponse({ ok: true, platform, rows, account: detectAccount() });
+          return;
+        }
+        if (platform === "chatgpt") {
+          const { token, out } = await listChatGPTSessions(to);
+          sendResponse({ ok: true, platform, rows: out, token, account: detectAccount() });
+          return;
+        }
+        sendResponse({ ok: false, error: "manual sync list not implemented for " + platform });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    }
+    if (msg.type === "fetch-session") {
+      (async () => {
+        if (platform === "grok") {
+          const pack = await fetchGrokTurns(msg.id);
+          sendResponse({ ok: true, platform, ...pack });
+          return;
+        }
+        if (platform === "chatgpt") {
+          let token = msg.token;
+          if (!token) {
+            const sess = await fetch("https://chatgpt.com/api/auth/session", { credentials: "include", headers: { accept: "application/json" } }).then((r) => r.json());
+            token = sess && sess.accessToken;
+          }
+          const pack = await fetchChatGPTTurns(msg.id, token);
+          sendResponse({ ok: true, platform, ...pack });
+          return;
+        }
+        sendResponse({ ok: false, error: "fetch-session not implemented for " + platform });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    }
+  });
+
+  // Initial attach
+  ensureComposerAttached();
 })();
+
