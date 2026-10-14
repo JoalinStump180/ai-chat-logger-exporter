@@ -1645,6 +1645,11 @@ function showMiddleMode(mode) {
 }
 
 $("thDateTime").addEventListener("click", function () {
+    
+    onEnterPane();
+    
+    
+    
   showMiddleMode("item");
   if (selectedNid) jumpToItemByNid(selectedNid, true, "head");
   else if (!datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
@@ -2156,13 +2161,32 @@ $("sideDelete").addEventListener("click", function () {
 
 
 
+
+let currPaneCanAcceptUserScrollNudge = false;
+let currPaneNudgeTimer = null;
+
+function onEnterPane() {
+  currPaneCanAcceptUserScrollNudge = false;
+
+  clearTimeout(currPaneNudgeTimer);
+
+  currPaneNudgeTimer = setTimeout(() => {
+    currPaneCanAcceptUserScrollNudge = true;
+  }, 1000);
+}
+
+
+
+
+
  let isScrollFetching = false;
 
 document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   const el = e.target;
-  
+   if (!currPaneCanAcceptUserScrollNudge) return;
   if (middleMode === "item") {
     if (isScrollFetching) return;
+   
 
     const scrollPercentage = (el.scrollTop + el.clientHeight) / el.scrollHeight;
     
@@ -2197,6 +2221,13 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
     renderSlice(false);
   }
 });
+
+
+
+
+
+
+
 
 // Sliding-window threshold handling is centralized in the earlier scroll listener.
 // The former second listener (with competing 50ms scrollTop nudges) is removed.
