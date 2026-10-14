@@ -1,48 +1,8 @@
-﻿
+
 
 const nidToConvKey = new Map(); // Maps every node ID directly to its exact convKey
 
 const $ = (id) => document.getElementById(id);
-
-// Five-line CSS clamp for PTT message text. The full message remains in the DOM.
-(function installPttFiveLineClamp() {
-  if (document.getElementById("pttFiveLineClampStyles")) return;
-  const style = document.createElement("style");
-  style.id = "pttFiveLineClampStyles";
-  style.textContent = `
-    .ptt-row > .ptt-content { flex: 1 1 auto; min-width: 0; display: block; }
-    .ptt-content > .ptt-txt {
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 5;
-      overflow: hidden;
-      white-space: pre-wrap;
-      word-break: break-word;
-      min-width: 0;
-      color: #222;
-    }
-    .ptt-content > .ptt-txt.ptt-expanded {
-      display: block;
-      -webkit-line-clamp: unset;
-      overflow: visible;
-    }
-    .ptt-read-more {
-      display: block;
-      border: 0;
-      padding: 0;
-      margin: 2px 0 0;
-      background: transparent;
-      color: #8b0000;
-      text-decoration: underline;
-      font: inherit;
-      font-size: 12px;
-      line-height: 1.3;
-      cursor: pointer;
-    }
-    .ptt-read-more[hidden] { display: none !important; }
-  `;
-  (document.head || document.documentElement).appendChild(style);
-})();
 
 // Keep the user-adjustable head-alignment offset across explorer reloads.
 (function initHeadOffsetControl() {
@@ -73,6 +33,74 @@ let selectedNid = null; // persistent selected item identity (nid) across sort m
 const openChats = new Set();
 const openAns = new Set();
 const forceOpenAsk = new Set();
+// Runtime-only UI state survives DOM removal/recreation by the datetime sliding window.
+const expandedMessageNids = new Set();
+// Item identities that contain at least one hit in the current search session.
+const searchHitNids = new Set();
+
+// UI-only preferences live in a separate IndexedDB database to avoid changing
+// the schema used by the logger's message records.
+const UI_STATE_DB_NAME = "aiChatLoggerExplorerUiState";
+const UI_STATE_STORE = "uiState";
+let uiStateDbPromise = null;
+function openUiStateDb() {
+  if (uiStateDbPromise) return uiStateDbPromise;
+  uiStateDbPromise = new Promise(function (resolve, reject) {
+    if (!window.indexedDB) { reject(new Error("IndexedDB is unavailable")); return; }
+    const request = indexedDB.open(UI_STATE_DB_NAME, 1);
+    request.onupgradeneeded = function () {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(UI_STATE_STORE)) {
+        db.createObjectStore(UI_STATE_STORE, { keyPath: "key" });
+      }
+    };
+    request.onsuccess = function () { resolve(request.result); };
+    request.onerror = function () { reject(request.error || new Error("Could not open UI state database")); };
+    request.onblocked = function () { reject(new Error("UI state database upgrade is blocked")); };
+  }).catch(function (error) {
+    uiStateDbPromise = null;
+    throw error;
+  });
+  return uiStateDbPromise;
+}
+function readAllUiState() {
+  return openUiStateDb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const request = db.transaction(UI_STATE_STORE, "readonly").objectStore(UI_STATE_STORE).getAll();
+      request.onsuccess = function () { resolve(request.result || []); };
+      request.onerror = function () { reject(request.error || new Error("Could not read UI state")); };
+    });
+  });
+}
+function saveUiState(key, value) {
+  openUiStateDb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(UI_STATE_STORE, "readwrite");
+      tx.objectStore(UI_STATE_STORE).put({ key: String(key), value: value });
+      tx.oncomplete = resolve;
+      tx.onerror = function () { reject(tx.error || new Error("Could not save UI state")); };
+      tx.onabort = function () { reject(tx.error || new Error("UI state save was aborted")); };
+    });
+  }).catch(function (error) { console.warn("AI Chat Explorer: UI state was not saved", error); });
+}
+async function restoreUiState() {
+  try {
+    const saved = await readAllUiState();
+    expandedMessageNids.clear();
+    for (const entry of saved) {
+      if (typeof entry.key === "string" && entry.key.indexOf("expanded:") === 0 && entry.value === true) {
+        expandedMessageNids.add(entry.key.slice("expanded:".length));
+      }
+      if (entry.key === "rawSearch" && $("rawSearch")) $("rawSearch").checked = entry.value === true;
+    }
+  } catch (error) {
+    // The Explorer remains usable in memory-only mode if IndexedDB is blocked.
+    console.warn("AI Chat Explorer: could not restore UI state", error);
+  }
+}
+function initializeUiStateAndLoad() {
+  return restoreUiState().finally(function () { return loadLazy(); });
+}
 const asksByConv = new Map();
 let recycleItems = [];
 const recycleAsks = new Map();
@@ -80,6 +108,8 @@ let recycleChats = [];
 let delSort = "";
 const TOKEN_COLORS = ["#e53935", "#1e88e5", "#fb8c00", "#43a047", "#8e24aa", "#00897b"];
 let tokenOn = [];
+let foldM = 3;
+let foldN = 3;
 
 function pad(n) { return String(n).padStart(2, "0"); }
 function fmtTs(ts) {
@@ -245,7 +275,10 @@ function chatInTime(r) {
 }
 
 function parseSearch(q) {
-  let s = String(q || "");
+  let s = String(q == null ? "" : q);
+  if ($("rawSearch") && $("rawSearch").checked) {
+    return { tokens: s.length ? [{ raw: s, low: s.toLowerCase() }] : [], urlIds: null, raw: true };
+  }
   let urlIds = null;
   const quoted = [];
   s = s.replace(/"([^"]*)"/g, (_, inner) => {
@@ -286,11 +319,42 @@ function hayHasAny(hay, tokens) {
   const h = String(hay || "").toLowerCase();
   return tokens.some((t) => h.includes(tokLow(t)));
 }
+function lineFilterValue(id) {
+  const el = $(id);
+  if (!el || String(el.value).trim() === "") return null;
+  const n = Number(el.value);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+function messageLineCount(text) { return String(text == null ? "" : text).split(/\r\n|\n|\r/).length; }
+function messagePassesLineCount(text) {
+  const count = messageLineCount(text);
+  const min = lineFilterValue("minLines");
+  const max = lineFilterValue("maxLines");
+  if (min !== null && count < min) return false;
+  if (max !== null && count > max) return false;
+  return true;
+}
+function searchableMessageText(text) {
+  const lines = String(text == null ? "" : text).split(/\r\n|\n|\r/);
+  const firstN = lineFilterValue("searchFirstN");
+  const lastN = lineFilterValue("searchLastN");
+  if (firstN === null && lastN === null) return lines.join("\n");
+  const keep = new Set();
+  if (firstN !== null) for (let i = 0; i < Math.min(firstN, lines.length); i++) keep.add(i);
+  if (lastN !== null) for (let i = Math.max(0, lines.length - lastN); i < lines.length; i++) keep.add(i);
+  return lines.filter((_, i) => keep.has(i)).join("\n");
+}
 function pageHay(r) {
   return [r.date, r.time, r.title, r.url, r.platform, r.conversationId, String(r.id)].join(" ");
 }
-function askHay(c) { return [fmtTs(c.ts), c.text, String(c.localIndex), c.responseId || ""].join(" "); }
-function ansHay(a) { return [fmtTs(a.ts), a.text, String(a.localIndex), a.responseId || ""].join(" "); }
+function askHay(c) {
+  if (!messagePassesLineCount(c.text)) return "";
+  return [fmtTs(c.ts), searchableMessageText(c.text), String(c.localIndex), c.responseId || ""].join(" ");
+}
+function ansHay(a) {
+  if (!messagePassesLineCount(a.text)) return "";
+  return [fmtTs(a.ts), searchableMessageText(a.text), String(a.localIndex), a.responseId || ""].join(" ");
+}
 
 function viewAsks(convKey) {
   return (filter === "recycle" ? recycleAsks : asksByConv).get(convKey) || [];
@@ -349,11 +413,50 @@ function highlightText(text, tokens) {
   return out + esc(src.slice(cur));
 }
 
-function lineHits(text, tokens) {
-  const lines = String(text || "").split("\n");
+function messageLines(text) {
+  return String(text == null ? "" : text).split(/\r\n|\n|\r/);
+}
+function shouldFoldMessage(text) {
+  return messageLines(text).length > foldM + foldN;
+}
+function foldedMessageText(text, expanded) {
+  const src = String(text == null ? "" : text);
+  const lines = messageLines(src);
+  if (expanded || lines.length <= foldM + foldN) return src;
+  const first = foldM > 0 ? lines.slice(0, foldM) : [];
+  const last = foldN > 0 ? lines.slice(lines.length - foldN) : [];
+  return first.concat(["…"], last).join("\n");
+}
+function messageContentHtml(text, tokens, nid, expanded) {
+  // The Set is authoritative: a re-created node restores its previous state.
+  const isExpanded = expandedMessageNids.has(String(nid));
+  return '<span class="msg-content" data-fold-id="' + esc(nid) + '" data-text="' + esc(String(text == null ? "" : text)) + '" data-expanded="' + (isExpanded ? '1' : '0') + '">' + highlightText(foldedMessageText(text, isExpanded), tokens) + '</span>';
+}
+function messageToggleHtml(text, nid, expanded) {
+  if (!shouldFoldMessage(text)) return '';
+  const isExpanded = expandedMessageNids.has(String(nid));
+  return '<a href="#" class="msg-toggle" data-fold-id="' + esc(nid) + '" aria-expanded="' + (isExpanded ? 'true' : 'false') + '">' + (isExpanded ? 'Show less' : 'Read more') + '</a>';
+}
+function hitDotHtml(nid) {
+  return searchHitNids.has(String(nid))
+    ? '<span class="ptt-hit-dot" aria-label="Contains a search hit" title="Contains a search hit"></span>'
+    : '';
+}
+
+function lineHits(text, tokens, isMessage) {
+  if (isMessage && !messagePassesLineCount(text)) return [];
+  const lines = String(text == null ? "" : text).split(/\r\n|\n|\r/);
+  const firstN = isMessage ? lineFilterValue("searchFirstN") : null;
+  const lastN = isMessage ? lineFilterValue("searchLastN") : null;
+  const allowed = new Set();
+  if (firstN === null && lastN === null) lines.forEach((_, i) => allowed.add(i));
+  else {
+    if (firstN !== null) for (let i = 0; i < Math.min(firstN, lines.length); i++) allowed.add(i);
+    if (lastN !== null) for (let i = Math.max(0, lines.length - lastN); i < lines.length; i++) allowed.add(i);
+  }
   const out = [];
   lines.forEach((line, i) => {
-    if (tokens.length && hayHasAny(line, tokens)) out.push({ lineNo: i + 1, line: line });
+    if (allowed.has(i) && tokens.length && hayHasAny(line, tokens)) out.push({ lineNo: i + 1, line: line });
   });
   return out;
 }
@@ -364,7 +467,7 @@ function paintTokenBar(tokens) {
   if (tokenOn.length !== tokens.length) tokenOn = tokens.map(function () { return true; });
   bar.innerHTML = tokens.map(function (t, i) {
     const col = TOKEN_COLORS[i % TOKEN_COLORS.length];
-    const label = t.raw.indexOf(" ") >= 0 ? '"' + t.raw + '"' : t.raw;
+    const label = (!$("rawSearch") || !$("rawSearch").checked) && t.raw.indexOf(" ") >= 0 ? '"' + t.raw + '"' : t.raw;
     return '<label style="color:' + col + '"><input type="checkbox" data-tok="' + i + '" ' + (tokenOn[i] !== false ? "checked" : "") + " /> " + esc(label) + "</label>";
   }).join("");
   bar.querySelectorAll("input").forEach(function (inp) {
@@ -405,128 +508,16 @@ function pttNode(opts) {
     ? '<span class="ptt-more"><button type="button" class="ptt-dots" data-rk="' + esc(opts.recordKey) + '" data-kind="' + esc(opts.storeKind || "ask") + '" data-text="' + esc(opts.editText || "") + '">\u22ee</button>' +
       '<span class="ptt-menu" hidden><button type="button" class="ptt-edit">Edit</button><button type="button" class="ptt-del">Delete</button></span></span>'
     : "";
+  const label = hitDotHtml(opts.nid) + '<span class="ptt-label-wrap"><span class="ptt-tag">' + esc(opts.tag) + '</span>' +
+    (opts.foldText !== undefined ? messageToggleHtml(opts.foldText, opts.nid, false) : '') + '</span>';
+  const bodyHtml = opts.foldText !== undefined
+    ? esc(opts.bodyPrefix || '') + messageContentHtml(opts.foldText, opts.tokens, opts.nid, false)
+    : highlightText(opts.body, opts.tokens);
   return '<div class="ptt-node" data-nid="' + esc(opts.nid) + '" ' + ckAttr + '><div class="ptt-row">' +
-    t.left +
-    '<span class="ptt-tag">' + esc(opts.tag) + "</span>" +
+    t.left + label +
     (hasKids ? t.right : "") +
-    '<div class="ptt-content"><div class="ptt-txt ptt-clamped">  ' + highlightText(opts.body, opts.tokens) +
-    '</div><button type="button" class="ptt-read-more" hidden>Read more</button></div>' + menu + "</div>" + kids + "</div>";
+    '<span class="ptt-txt">  ' + bodyHtml + "</span>" + menu + "</div>" + kids + "</div>";
 }
-
-function pttTextElementFromNode(node) {
-  const el = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
-  return el && el.closest ? el.closest(".ptt-content > .ptt-txt") : null;
-}
-
-function pttTextOffset(textEl, node, offset) {
-  try {
-    const r = document.createRange();
-    r.selectNodeContents(textEl);
-    r.setEnd(node, offset);
-    return r.toString().length;
-  } catch (_) {
-    return 0;
-  }
-}
-
-// Cache each text element's clamp result in memory. The cache is invalidated when
-// its text changes or the viewport is resized; routine observer refreshes then avoid
-// repeating scrollHeight/clientHeight layout reads for unchanged messages.
-let pttFoldMeasureCache = new WeakMap();
-
-function refreshPttFoldControls(root) {
-  const scope = root && root.querySelectorAll ? root : document;
-  scope.querySelectorAll(".ptt-content > .ptt-txt").forEach(function (textEl) {
-    const button = textEl.parentElement.querySelector(":scope > .ptt-read-more");
-    if (!button) return;
-    if (textEl.classList.contains("ptt-expanded")) {
-      button.hidden = false;
-      button.textContent = "Show less";
-      return;
-    }
-
-    // Do not measure or cache elements in a hidden pane. Their dimensions can be
-    // zero or otherwise unrepresentative until the pane is displayed.
-    if (!textEl.isConnected || textEl.getClientRects().length === 0) return;
-
-    const text = textEl.textContent || "";
-    let cached = pttFoldMeasureCache.get(textEl);
-    if (!cached || cached.text !== text) {
-      // scrollHeight reflects the complete, unclipped content; clientHeight is the five-line box.
-      cached = {
-        text,
-        needsReadMore: textEl.scrollHeight > textEl.clientHeight + 2
-      };
-      pttFoldMeasureCache.set(textEl, cached);
-    }
-    button.hidden = !cached.needsReadMore;
-    button.textContent = "Read more";
-  });
-}
-
-// PTT is rebuilt incrementally in several paths; re-check after layout. Measurements
-// are reused for unchanged text and recalculated after viewport-size changes.
-(function observePttFoldContent() {
-  let refreshQueued = false;
-  const refresh = () => {
-    if (refreshQueued) return;
-    refreshQueued = true;
-    requestAnimationFrame(() => {
-      refreshQueued = false;
-      refreshPttFoldControls(document);
-    });
-  };
-  const observer = new MutationObserver(function (records) {
-    if (records.some(r => r.addedNodes.length || r.removedNodes.length || r.type === "characterData")) refresh();
-  });
-  [$("titleView"), $("dateTimeView")].filter(Boolean).forEach(el =>
-    observer.observe(el, { childList: true, subtree: true, characterData: true })
-  );
-  window.addEventListener("resize", function () {
-    pttFoldMeasureCache = new WeakMap();
-    refresh();
-  });
-  refresh();
-})();
-
-// Keep native mouse-drag selection, but when it crosses folded PTT text, copy the
-// full text of each folded message touched by that selection (including hidden lines).
-// This handles a single item and arbitrary spans across multiple PTT items.
-document.addEventListener("copy", function (e) {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return;
-  const range = selection.getRangeAt(0);
-  const startEl = pttTextElementFromNode(range.startContainer);
-  const endEl = pttTextElementFromNode(range.endContainer);
-  if (!startEl || !endEl) return;
-
-  let selectedEls = [];
-  document.querySelectorAll(".ptt-content > .ptt-txt").forEach(function (el) {
-    try { if (range.intersectsNode(el)) selectedEls.push(el); } catch (_) {}
-  });
-  if (!selectedEls.length || !selectedEls.some(el => el.classList.contains("ptt-clamped") && !el.classList.contains("ptt-expanded"))) return;
-  if (!selectedEls.includes(startEl)) selectedEls.unshift(startEl);
-  if (!selectedEls.includes(endEl)) selectedEls.push(endEl);
-  selectedEls.sort(function (a, b) {
-    if (a === b) return 0;
-    return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1;
-  });
-
-  const first = selectedEls[0];
-  const last = selectedEls[selectedEls.length - 1];
-  const startOffset = pttTextOffset(first, range.startContainer, range.startOffset);
-  const endOffset = pttTextOffset(last, range.endContainer, range.endOffset);
-  const parts = selectedEls.map(function (el, i) {
-    const full = el.textContent || "";
-    const folded = el.classList.contains("ptt-clamped") && !el.classList.contains("ptt-expanded");
-    if (first === last) return folded ? full : full.slice(startOffset, endOffset);
-    if (i === 0) return folded ? full : full.slice(startOffset);
-    if (i === selectedEls.length - 1) return folded ? full : full.slice(0, endOffset);
-    return full;
-  });
-  e.clipboardData.setData("text/plain", parts.join("\n\n"));
-  e.preventDefault();
-}, true);
 
 function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
 
@@ -546,6 +537,8 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
           ck: convKey,
           tag: "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex),
           body: fmtTs(a.ts) + "  " + (a.text || ""),
+          bodyPrefix: fmtTs(a.ts) + "  ",
+          foldText: a.text || "",
           tokens: tokens,
           kidsHtml: "",
           open: false,
@@ -560,6 +553,8 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
     ck: convKey,
     tag: tag,
     body: fmtTs(c.ts) + "  " + (c.text || ""),
+    bodyPrefix: fmtTs(c.ts) + "  ",
+    foldText: c.text || "",
     tokens: tokens,
     kidsHtml: kidsHtml,
     open: !!(kidsHtml && kidsOpen),
@@ -609,8 +604,8 @@ function applySearchUnfold(r, tokens) {
 
 function collectHits(r, tokens) {
   const list = viewAsks(r.convKey);
-  function add(kind, idLabel, text, ts) {
-    lineHits(text, tokens).forEach(function (h) {
+  function add(kind, idLabel, text, ts, isMessage) {
+    lineHits(text, tokens, !!isMessage).forEach(function (h) {
       hitList.push({
         urlid: r.id,
         convKey: r.convKey,
@@ -626,14 +621,14 @@ function collectHits(r, tokens) {
   if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r));
   if (includeComments) {
     liveAsks(list).filter((c) => inTime(c.ts)).forEach(function (c) {
-      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts);
+      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true);
     });
   }
   if (includeImpAsks || includeImpAns) {
     list.filter((c) => isImp(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
-      if (includeImpAsks && inTime(c.ts)) add("ask-" + (c.recordKey || c.localIndex), "ask#" + c.localIndex, c.text || "", c.ts);
+      if (includeImpAsks && inTime(c.ts)) add("ask-" + (c.recordKey || c.localIndex), "ask#" + c.localIndex, c.text || "", c.ts, true);
       if (includeImpAns) (c.answers || []).filter((a) => inTime(a.ts)).forEach(function (a) {
-        add("ans-" + (a.recordKey || a.localIndex), "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts);
+        add("ans-" + (a.recordKey || a.localIndex), "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
       });
     });
   }
@@ -710,15 +705,16 @@ function itemRowHtml(it, tokens) {
   const tag = it.kind === "onMsg" ? ("onMsg#" + it.localIndex) : ("ask#" + it.localIndex);
   return '<tr class="item-row" data-ck="' + esc(it.convKey) + '" data-nid="' + esc(nid) + '">' +
     "<td>" + esc(fmtTs(it.ts)) + "</td><td>" + esc(it.session.platform) + "</td>" +
-    '<td>' + esc(tag) + "  " + highlightText(it.text, tokens) + "</td>" +
+    '<td><span class="ptt-label-wrap">' + hitDotHtml(nid) + '<span class="ptt-tag">' + esc(tag) + '</span>' + messageToggleHtml(it.text || "", nid, false) + '</span>  ' + messageContentHtml(it.text || "", tokens, nid, false) + "</td>" +
     '<td title="' + esc(it.session.url) + '">' + esc(it.session.conversationId || it.session.url || "") + "</td>" +
     "<td></td><td></td></tr>";
 }
 function itemRowHtml2(it, tokens) {
   const tag = it.kind === "onMsg" ? ("onMsg#" + it.localIndex) : ("ask#" + it.localIndex);
-  return '<tr class="item-row" data-ck="' + esc(it.convKey) + '" data-nid="' + esc(it.kind + "-" + (it.recordKey || it.localIndex)) + '">' +
+  const nid = it.kind + "-" + (it.recordKey || it.localIndex);
+  return '<tr class="item-row" data-ck="' + esc(it.convKey) + '" data-nid="' + esc(nid) + '">' +
     "<td>" + esc(fmtTs(it.ts)) + "</td><td>" + esc(it.session.platform) + "</td>" +
-    '<td>' + esc(tag) + "  " + highlightText(it.text, tokens) + "</td>" +
+    '<td><span class="ptt-label-wrap">' + hitDotHtml(nid) + '<span class="ptt-tag">' + esc(tag) + '</span>' + messageToggleHtml(it.text || "", nid, false) + '</span>  ' + messageContentHtml(it.text || "", tokens, nid, false) + "</td>" +
     '<td title="' + esc(it.session.url) + '">' + esc(it.session.conversationId || it.session.url || "") + "</td>" +
     "<td></td><td></td></tr>";
 }
@@ -760,80 +756,10 @@ function datetimeRangeHtml(start, end, tokens) {
   return html.join("");
 }
 
-// Update the sliding window while retaining DOM identity for items that remain
-// in the window. Group/banner rows are regenerated, but matching .ptt-node
-// elements (and their current classes/state) are moved into the new tree.
-function renderDateTimeRangePreservingItems(tb, start, end, tokens) {
-  const oldNodes = new Map();
-  tb.querySelectorAll(".ptt-node[data-nid]").forEach(function (node) {
-    const nid = node.getAttribute("data-nid");
-    if (nid && !oldNodes.has(nid)) oldNodes.set(nid, node);
-  });
-
-  // Build the new outer group structure off-DOM first.
-  const next = document.createElement("tbody");
-  next.innerHTML = datetimeRangeHtml(start, end, tokens);
-
-  // Replace newly-created item nodes with the existing objects when their IDs
-  // still belong to the window. Moving a node preserves its object identity.
-  next.querySelectorAll(".ptt-node[data-nid]").forEach(function (newNode) {
-    const oldNode = oldNodes.get(newNode.getAttribute("data-nid"));
-    if (oldNode) newNode.replaceWith(oldNode);
-  });
-
-  tb.replaceChildren(...Array.from(next.childNodes));
-}
-
 function buildDateTimeItems(tokens) {
   datetimeItems = collectItems(matched, tokens);
   // collectItems already sorts newest-to-oldest across every conversation.
   dtStart = dtEnd = 0;
-}
-
-// Viewport coordinator: a long-jump owns scroll positioning until its target
-// has been rendered and positioned. Sliding-window loads must not independently
-// compensate scrollTop while that ownership is active.
-let viewportOperation = "idle";
-let viewportJumpGeneration = 0;
-let viewportJumpTarget = null;
-
-// Boundary-fetch state is independent of viewport positioning. A boundary is
-// handled once until the user leaves that boundary zone; this prevents DOM
-// updates and their resulting scroll events from repeatedly requesting windows.
-let dtBoundaryFetch = "idle"; // idle | up | down
-let dtBoundaryHandled = { up: false, down: false };
-let dtBoundaryFetchGeneration = 0;
-const DT_BOTTOM_THRESHOLD = 100;
-const DT_TOP_THRESHOLD = 80;
-function scheduleBoundaryFetchRelease(direction, generation) {
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (generation === dtBoundaryFetchGeneration && dtBoundaryFetch === direction) {
-      dtBoundaryFetch = "idle";
-    }
-  }));
-}
-function beginViewportJump(nid) {
-  viewportJumpGeneration += 1;
-  viewportOperation = "jump";
-  viewportJumpTarget = nid;
-  return viewportJumpGeneration;
-}
-function isCurrentViewportJump(generation) {
-  return generation === viewportJumpGeneration && viewportOperation === "jump";
-}
-function finishViewportJump(generation) {
-  if (!isCurrentViewportJump(generation)) return;
-  viewportOperation = "idle";
-  viewportJumpTarget = null;
-}
-function afterViewportLayout(generation, callback) {
-  requestAnimationFrame(() => {
-    if (!isCurrentViewportJump(generation)) return;
-    requestAnimationFrame(() => {
-      if (!isCurrentViewportJump(generation)) return;
-      callback();
-    });
-  });
 }
 
 function renderDateTimeWindow(nid, scroll, scrollMode = "center") {
@@ -1043,10 +969,9 @@ function selectItemByNid(nid, scroll = false, scrollMode = "center") {
     // For pane switches and Prev/Next navigation, keep the beginning of a
     // long item visible (tag/fold icon + timestamp + opening text). Short
     // items retain the usual centered scrolling behavior.
-    // All explicit head-positioning requests use one route, regardless of
-    // message size. This keeps short and tall items under the same alignment
-    // rule and applies the user's signed pixel offset consistently.
-    const revealHead = scrollMode === "head";
+    const textEl = el.querySelector(":scope > .ptt-row .ptt-txt") || el.querySelector("td:nth-child(3)");
+    const textLength = textEl ? (textEl.textContent || "").trim().length : 0;
+    const revealHead = scrollMode === "head" && textLength >= 240;
 
     if (revealHead) {
       // Positive offset places the item this many pixels below the top of
@@ -1054,21 +979,21 @@ function selectItemByNid(nid, scroll = false, scrollMode = "center") {
       // Negative values are supported to move the item closer to/above the top.
       const wrap = document.querySelector(".listwrap");
       const offsetInput = $("headOffsetPx");
-      const parsedOffset = offsetInput ? Number.parseInt(offsetInput.value, 10) : 0;
-      const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+      const parsedOffset = offsetInput ? Number.parseInt(offsetInput.value, 10) : 36;
+      const offset = Number.isFinite(parsedOffset) ? parsedOffset : 36;
       if (wrap) {
         const itemRect = el.getBoundingClientRect();
         const wrapRect = wrap.getBoundingClientRect();
         const targetTop = wrap.scrollTop + itemRect.top - wrapRect.top - offset;
-        wrap.scrollTo({ top: targetTop, behavior: viewportOperation === "jump" ? "auto" : "smooth" });
+        wrap.scrollTo({ top: targetTop, behavior: "smooth" });
       } else {
-        el.scrollIntoView({ block: "start", inline: "nearest", behavior: viewportOperation === "jump" ? "auto" : "smooth" });
+        el.scrollIntoView({ block: "start", inline: "nearest", behavior: "smooth" });
       }
     } else {
       el.scrollIntoView({
         block: "center",
         inline: "nearest",
-        behavior: viewportOperation === "jump" ? "auto" : "smooth"
+        behavior: "smooth"
       });
     }
   }
@@ -1345,6 +1270,23 @@ function applyEditedText(recordKey, kind, text) {
   });
 }
 
+function readFoldSetting(input) {
+  const raw = String(input.value == null ? "" : input.value).trim();
+  if (raw === "") return 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+["foldM", "foldN"].forEach(function (id) {
+  const input = $(id);
+  if (!input) return;
+  input.addEventListener("change", function () {
+    const value = readFoldSetting(input);
+    input.value = String(value);
+    if (id === "foldM") foldM = value; else foldN = value;
+    seek($("q").value);
+  });
+});
+
 function seek(q) {
   forceOpenAsk.clear();
   const parsed = parseSearch(q);
@@ -1353,6 +1295,10 @@ function seek(q) {
   matched = source.filter(function (r) { return matchRow(r, q); });
   hitList = [];
   if (parsed.tokens.length) matched.forEach(function (r) { collectHits(r, parsed.tokens); });
+  searchHitNids.clear();
+  hitList.forEach(function (h) {
+    if (/^(?:onMsg|ask|ans)-/.test(String(h.nid || ""))) searchHitNids.add(String(h.nid));
+  });
   hitCursor = hitList.length ? 0 : -1;
   setSeek(100, "Seek 100%  " + matched.length + " urls + " + hitList.length + " hits");
   datetimeItems = []; dtStart = dtEnd = 0;
@@ -1507,20 +1453,8 @@ function onTreeToggle(e) {
 function closeMenus() {
   document.querySelectorAll(".ptt-menu").forEach(function (m) { m.hidden = true; });
 }
-$("titleView").closest("table").addEventListener("click", function (e) {
-  const foldButton = e.target.closest(".ptt-read-more");
-  if (foldButton) {
-    e.preventDefault();
-    e.stopPropagation();
-    const content = foldButton.parentElement;
-    const textEl = content && content.querySelector(":scope > .ptt-txt");
-    if (!textEl) return;
-    const expanded = textEl.classList.toggle("ptt-expanded");
-    foldButton.textContent = expanded ? "Show less" : "Read more";
-    foldButton.hidden = false;
-    if (!expanded) requestAnimationFrame(() => refreshPttFoldControls(content));
-    return;
-  }
+// Delegate from the document so Read more / Show less works in both panes.
+document.addEventListener("click", function (e) {
   const dots = e.target.closest(".ptt-dots");
   if (dots) {
     e.stopPropagation();
@@ -1575,6 +1509,34 @@ $("titleView").closest("table").addEventListener("click", function (e) {
     chrome.runtime.sendMessage({ type: "recycle-node", recordKey: rk, kind: dotsBtn.dataset.kind }, function () {
       void chrome.runtime.lastError;
       loadLazy();
+    });
+    return;
+  }
+  const msgToggle = e.target.closest(".msg-toggle");
+  if (msgToggle) {
+    e.preventDefault();
+    e.stopPropagation();
+    const nid = String(msgToggle.dataset.foldId || "");
+    if (!nid) return;
+    const clickedContent = msgToggle.closest(".ptt-node, tr.item-row");
+    const localContent = clickedContent && clickedContent.querySelector('.msg-content[data-fold-id="' + CSS.escape(nid) + '"]');
+    const expanded = localContent ? localContent.dataset.expanded !== "1" : !expandedMessageNids.has(nid);
+    if (expanded) expandedMessageNids.add(nid);
+    else expandedMessageNids.delete(nid);
+    saveUiState("expanded:" + nid, expanded);
+
+    // Apply the same state to every currently rendered copy in both panes.
+    const tokens = parseSearch($("q").value).tokens;
+    document.querySelectorAll(".msg-content").forEach(function (content) {
+      if (String(content.dataset.foldId || "") !== nid) return;
+      const text = content.dataset.text || "";
+      content.dataset.expanded = expanded ? "1" : "0";
+      content.innerHTML = highlightText(foldedMessageText(text, expanded), tokens);
+    });
+    document.querySelectorAll(".msg-toggle").forEach(function (toggle) {
+      if (String(toggle.dataset.foldId || "") !== nid) return;
+      toggle.textContent = expanded ? "Show less" : "Read more";
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     });
     return;
   }
@@ -1637,19 +1599,9 @@ function showMiddleMode(mode) {
   $("titleView").hidden = mode !== "ptt";
   $("dateTimeView").hidden = mode !== "item";
   updateHeaderIndicators();
-
-  // Wait until the newly visible pane has layout before measuring its clamp state.
-  // Only refresh that pane; the in-memory cache remains intact for the other pane.
-  const activePane = mode === "item" ? $("dateTimeView") : $("titleView");
-  requestAnimationFrame(() => refreshPttFoldControls(activePane));
 }
 
 $("thDateTime").addEventListener("click", function () {
-    
-    onEnterPane();
-    
-    
-    
   showMiddleMode("item");
   if (selectedNid) jumpToItemByNid(selectedNid, true, "head");
   else if (!datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
@@ -1662,29 +1614,18 @@ $("thTitle").addEventListener("click", function () {
 
 function jumpToItemByNid(nid, scroll = true, scrollMode = "center") {
   if (!nid) return;
+
   const ck = findConvForNid(nid);
   if (!ck) return;
 
-  const generation = scroll ? beginViewportJump(nid) : null;
-  const finish = () => { if (generation !== null) finishViewportJump(generation); };
-
+  const tokens = parseSearch($("q").value).tokens;
   if (middleMode === "item") {
     const existing = $("dateTimeView").querySelector('[data-nid="' + CSS.escape(nid) + '"]');
     if (existing) {
       selectItemByNid(nid, scroll, scrollMode);
-      if (generation !== null) afterViewportLayout(generation, finish);
       return;
     }
-    renderDateTimeWindow(nid, false, scrollMode);
-    if (generation !== null) {
-      afterViewportLayout(generation, () => {
-        if (!isCurrentViewportJump(generation)) return;
-        const positioned = selectItemByNid(nid, scroll, scrollMode);
-        // Verify that the target still exists before releasing viewport ownership.
-        if (positioned) finish();
-        else finish();
-      });
-    }
+    renderDateTimeWindow(nid, scroll, scrollMode);
     return;
   }
 
@@ -1692,28 +1633,50 @@ function jumpToItemByNid(nid, scroll = true, scrollMode = "center") {
   const existingTitleNode = tb.querySelector('[data-nid="' + CSS.escape(nid) + '"]');
   if (existingTitleNode) {
     selectItemByNid(nid, scroll, scrollMode);
-    if (generation !== null) afterViewportLayout(generation, finish);
     return;
   }
 
-  const sessionIndex = matched.findIndex((r) => r.convKey === ck);
-  if (sessionIndex < 0) { finish(); return; }
+  // PTT / title view:
+  // Find the SESSION containing the target item.
+  const sessionIndex = matched.findIndex(
+    (r) => r.convKey === ck
+  );
+
+  if (sessionIndex < 0) return;
+
+  // Expand the correct parent before rendering.
   openChats.add(ck);
-  const end = Math.min(matched.length, Math.max(PAGE, Math.ceil((sessionIndex + 1) / PAGE) * PAGE));
+
+  // Render enough session rows to include the target parent.
+  const end = Math.min(
+    matched.length,
+    Math.max(
+      PAGE,
+      Math.ceil((sessionIndex + 1) / PAGE) * PAGE
+    )
+  );
+
   tb.innerHTML = "";
-  if (end > 0) tb.insertAdjacentHTML("beforeend", matched.slice(0, end).map(rowHtml).join(""));
+
+  if (end > 0) {
+    tb.insertAdjacentHTML(
+      "beforeend",
+      matched.slice(0, end).map(rowHtml).join("")
+    );
+  }
+
   shown = end;
+
   $("empty").hidden = matched.length > 0;
-  $("status").textContent = shown + " of " + matched.length + " shown";
+  $("status").textContent =
+    shown + " of " + matched.length + " shown";
+
   updateHeaderIndicators();
 
-  const positionTitleTarget = () => {
-    if (generation !== null && !isCurrentViewportJump(generation)) return;
+  // Wait until the target node exists in the rendered DOM.
+  requestAnimationFrame(() => {
     selectItemByNid(nid, scroll, scrollMode);
-    if (generation !== null) afterViewportLayout(generation, finish);
-  };
-  if (generation !== null) afterViewportLayout(generation, positionTitleTarget);
-  else requestAnimationFrame(positionTitleTarget);
+  });
 }
 
 function jumpToItemByNid2(nid, scroll) {
@@ -1764,29 +1727,10 @@ $("unfoldAnsBtn").onclick = function () { batchAnsOpen = true; matched.forEach((
 document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   const el = e.target;
   if (middleMode === "item") {
-    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - DT_BOTTOM_THRESHOLD;
-    const nearTop = el.scrollTop <= DT_TOP_THRESHOLD;
-
-    // Re-arm a boundary only after the scroller has genuinely left its zone.
-    // Do not use scrollTop nudges or timers: those can race long-jump positioning.
-    if (!nearBottom) dtBoundaryHandled.down = false;
-    if (!nearTop) dtBoundaryHandled.up = false;
-
-    if (viewportOperation === "jump" || dtBoundaryFetch !== "idle") return;
-
-    if (nearBottom && !dtBoundaryHandled.down && dtEnd < datetimeItems.length) {
-      dtBoundaryHandled.down = true;
-      dtBoundaryFetch = "down";
-      const generation = ++dtBoundaryFetchGeneration;
-      enforceSlidingWindow("down");
-      scheduleBoundaryFetchRelease("down", generation);
-    } else if (nearTop && !dtBoundaryHandled.up && dtStart > 0) {
-      dtBoundaryHandled.up = true;
-      dtBoundaryFetch = "up";
-      const generation = ++dtBoundaryFetchGeneration;
-      enforceSlidingWindow("up");
-      scheduleBoundaryFetchRelease("up", generation);
-    }
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) enforceSlidingWindow("down");
+    //if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) appendDateTimeBatch("down");
+    else if (el.scrollTop < 80) enforceSlidingWindow("up");
+    //else if (el.scrollTop < 80) appendDateTimeBatch("up");
   } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40 && shown < matched.length) {
     renderSlice(false);
   }
@@ -1810,7 +1754,8 @@ document.addEventListener("keydown", function (e) {
 
 
 function patternLen(q) {
-  let s = String(q || "");
+  let s = String(q == null ? "" : q);
+  if ($("rawSearch") && $("rawSearch").checked) return s.length;
   s = s.replace(/"urlid\s+[^"]*"/ig, " ");
   s = s.replace(/(^|\s)urlid:\S+/ig, " ");
   s = s.replace(/"/g, "");
@@ -1832,6 +1777,18 @@ function flickerShort() {
   };
   tick();
 }
+function scheduleSearchFromControls() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(function () { seek($("q").value); }, 120);
+}
+$("rawSearch").addEventListener("change", function () {
+  saveUiState("rawSearch", $("rawSearch").checked);
+  seek($("q").value);
+});
+["searchFirstN", "searchLastN", "minLines", "maxLines"].forEach(function (id) {
+  $(id).addEventListener("input", scheduleSearchFromControls);
+  $(id).addEventListener("change", scheduleSearchFromControls);
+});
 $("q").addEventListener("input", function () {
   clearTimeout(searchTimer);
   const n = patternLen($("q").value);
@@ -2095,7 +2052,7 @@ function bindTimeBox(which) {
 bindTimeBox("from");
 bindTimeBox("to");
 
-loadLazy();
+void initializeUiStateAndLoad();
 
 let sideRoutes = [];
 let sideTarget = null;
@@ -2127,6 +2084,28 @@ document.querySelector(".side").addEventListener("contextmenu", function (e) {
   menu.style.left = e.clientX + "px";
   menu.style.top = e.clientY + "px";
 });
+// YouTube-style copy behavior: when a user selects text in a folded message,
+// Ctrl+C copies the canonical full message text rather than only the visible preview.
+document.addEventListener("copy", function (e) {
+  const selection = window.getSelection && window.getSelection();
+  if (!selection || selection.isCollapsed || !e.clipboardData) return;
+
+  function containingMessage(node) {
+    const el = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
+    return el && el.closest ? el.closest(".msg-content") : null;
+  }
+
+  const startMessage = containingMessage(selection.anchorNode);
+  const endMessage = containingMessage(selection.focusNode);
+  if (!startMessage || startMessage !== endMessage || startMessage.dataset.expanded === "1") return;
+
+  // Only override copying when the selection is inside one collapsed message.
+  const fullText = startMessage.dataset.text;
+  if (typeof fullText !== "string") return;
+  e.clipboardData.setData("text/plain", fullText);
+  e.preventDefault();
+});
+
 document.addEventListener("click", function () { $("sideMenu").hidden = true; });
 $("sideAdd").addEventListener("click", function () {
   const name = prompt("Item name");
@@ -2161,32 +2140,13 @@ $("sideDelete").addEventListener("click", function () {
 
 
 
-
-let currPaneCanAcceptUserScrollNudge = false;
-let currPaneNudgeTimer = null;
-
-function onEnterPane() {
-  currPaneCanAcceptUserScrollNudge = false;
-
-  clearTimeout(currPaneNudgeTimer);
-
-  currPaneNudgeTimer = setTimeout(() => {
-    currPaneCanAcceptUserScrollNudge = true;
-  }, 1000);
-}
-
-
-
-
-
  let isScrollFetching = false;
 
 document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   const el = e.target;
-   if (!currPaneCanAcceptUserScrollNudge) return;
+  
   if (middleMode === "item") {
     if (isScrollFetching) return;
-   
 
     const scrollPercentage = (el.scrollTop + el.clientHeight) / el.scrollHeight;
     
@@ -2221,26 +2181,22 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
     renderSlice(false);
   }
 });
-
-
-
-
-
-
-
-
-// Sliding-window threshold handling is centralized in the earlier scroll listener.
-// The former second listener (with competing 50ms scrollTop nudges) is removed.
-
+ 
 const MAX_WINDOW = 300; // Can safely handle small or large windows now
  
-function enforceSlidingWindow(direction) {
-  if (viewportOperation === "jump") return;
-
-
-  //if (isSliding) return;
+ 
+ 
+ let isSliding = false;
  
 
+ 
+ 
+function enforceSlidingWindow7(direction) {
+
+
+  if (isSliding) return;
+ isSliding = true;
+ 
   if (middleMode !== "item" || !datetimeItems.length) return;
   const tb = $("dateTimeView");
   const wrap = document.querySelector(".listwrap");
@@ -2250,7 +2206,7 @@ function enforceSlidingWindow(direction) {
     if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
       dtStart = 0;
       dtEnd = datetimeItems.length;
-      renderDateTimeRangePreservingItems(tb, dtStart, dtEnd, tokens);
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
     }
     return;
   }
@@ -2262,7 +2218,7 @@ function enforceSlidingWindow(direction) {
       if (dtEnd - dtStart > MAX_WINDOW) {
         dtStart = dtEnd - MAX_WINDOW;
       }
-      renderDateTimeRangePreservingItems(tb, dtStart, dtEnd, tokens);
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
     }
   } else if (direction === "up") {
     if (dtStart > 0) {
@@ -2272,7 +2228,7 @@ function enforceSlidingWindow(direction) {
       if (dtEnd - dtStart > MAX_WINDOW) {
         dtEnd = dtStart + MAX_WINDOW;
       }
-      renderDateTimeRangePreservingItems(tb, dtStart, dtEnd, tokens);
+      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
       if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
     } else {
       refreshDateTimeHead();
@@ -2281,9 +2237,95 @@ function enforceSlidingWindow(direction) {
   }
 
   $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+ 
   
-
+   
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        isSliding = false;
+        console.log("--> rAF reached: isSliding is now   == ",isSliding);
+        
+        
+        
+        
+        
+        
+        
+      });
+    });
 }
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+function enforceSlidingWindow(direction) {
+  if (isSliding) return;
+  isSliding = true;
+
+  try {
+    if (middleMode !== "item" || !datetimeItems.length) return;
+
+    const tb = $("dateTimeView");
+    const wrap = document.querySelector(".listwrap");
+    const tokens = parseSearch($("q").value).tokens;
+
+    if (datetimeItems.length <= MAX_WINDOW) {
+      if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
+        dtStart = 0;
+        dtEnd = datetimeItems.length;
+        tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      }
+      return;
+    }
+
+    if (direction === "down") {
+      if (dtEnd < datetimeItems.length) {
+        dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
+
+        // Enforce maximum window size by shifting dtStart forward if needed.
+        if (dtEnd - dtStart > MAX_WINDOW) {
+          dtStart = dtEnd - MAX_WINDOW;
+        }
+
+        tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+      }
+    } else if (direction === "up") {
+      if (dtStart > 0) {
+        const beforeHeight = wrap ? wrap.scrollHeight : 0;
+
+        dtStart = Math.max(0, dtStart - DT_BATCH);
+
+        // Enforce maximum window size by shifting dtEnd backward if needed.
+        if (dtEnd - dtStart > MAX_WINDOW) {
+          dtEnd = dtStart + MAX_WINDOW;
+        }
+
+        tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
+
+        if (wrap) {
+          wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+        }
+      } else {
+        refreshDateTimeHead();
+        return;
+      }
+    }
+
+    $("status").textContent =
+      `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+
+  } finally {
+    isSliding = false;
+    console.log("--> enforceSlidingWindow finished: isSliding =", isSliding);
+  }
+}
+ 
+ 
+ 
  
 function enforceSlidingWindow_correct_bak(direction) {
   if (middleMode !== "item" || !datetimeItems.length) return;
