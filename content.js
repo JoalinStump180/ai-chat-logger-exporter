@@ -1,6 +1,6 @@
-(function () {
+﻿(function () {
   "use strict";
-
+let lastActiveComposer = null;
   const host = location.hostname;
   const platform =
     host.includes("gemini") ? "gemini" :
@@ -8,7 +8,7 @@
     (host.includes("chatgpt") || host.includes("openai")) ? "chatgpt" :
     null;
 
-  if (!platform) {
+   if (!platform) {
     chrome.storage.local.get("sideRoutes", (bag) => {
       const rules = Array.isArray(bag.sideRoutes) ? bag.sideRoutes : [];
       const hit = rules.find((item) => String(item.text || "").split(/\n/).some((line) => {
@@ -16,11 +16,20 @@
         return m && location.href.startsWith(m[1]);
       }));
       if (!hit) return;
+     alert("hit's val is " + (hit.text || ""));
+ 
+ 
+ 
+ 
+
+      
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
-        const el = document.activeElement;
-        if (!el || !(el.isContentEditable || el.tagName === "TEXTAREA")) return;
-        const text = (el.value || el.innerText || "").replace(/\s+/g, " ").trim();
+        //const el = document.activeElement;
+        const el = findComposer();
+         
+        const text = getText(el);
+        alert('text document.addEventListener is ' + (text || ""));
         if (!text) return;
         const u = new URL(location.href);
         u.hash = "";
@@ -30,7 +39,7 @@
           conversationId: u.pathname + u.search,
           url: u.origin + u.pathname + u.search,
           title: document.title,
-          text: text,
+          text: text+'     other plat',
           logAsks: true,
           ts: Date.now(),
           nonce: Date.now() + "-extra"
@@ -46,7 +55,7 @@
   // --------------------------------------------------
   // v1.5 state (no text polling)
   // --------------------------------------------------
-  let lastActiveComposer = null;
+  //let lastActiveComposer = null;
   let lastComposerText = "";
   let mousedownText = "";          // filled on mousedown, used by Send
 
@@ -419,6 +428,8 @@
       'button[aria-label*="Send" i]',
       'button[aria-label="Submit"]',
       'button[aria-label="Send"]',
+            'button[aria-label="Search"]',
+      'button[aria-label="search"]',
       'button[data-testid="chat-submit"]',
       'button[data-testid="grokSendButton"]',
       'button[data-testid*="submit"]',
@@ -511,7 +522,7 @@
       lastActiveComposer = el;
       setTimeout(() => {
         lastComposerText = getComposerText(el);
-      }, 50);
+      }, 0);
     });
   }
 
@@ -519,8 +530,57 @@
     const el = findComposer();
     if (el) attachComposerListeners(el);
   }
-  ensureComposerAttached();
-  setInterval(ensureComposerAttached, 1000);
+ // ensureComposerAttached();
+ // setInterval(ensureComposerAttached, 1000);
+
+
+
+
+  function getText(el) {
+    if (!el) return "";
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      return el.value || "";
+    }
+    return (el.innerText || el.textContent || "").replace(/\u00a0/g, " ");
+  }
+
+
+document.addEventListener("focus", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+    lastActiveComposer = el;
+     lastComposerText = getText(el);  
+  }
+});
+
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+    lastActiveComposer = el;
+    lastComposerText = getText(el);   // also update text
+  }
+});
+
+document.addEventListener("focusin", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+    lastActiveComposer = el;
+     lastComposerText = getText(el);  
+  }
+});
+
+document.addEventListener("paste", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+    lastActiveComposer = el;
+    requestAnimationFrame(() => {
+      lastComposerText = getText(el);
+    });
+  }
+});
+  // ---why u do not do it like this   ?
+
+
 
   // --------------------------------------------------
   // logAsk (called only from Enter and Send)
@@ -587,6 +647,8 @@
         testid.includes("send") ||
         aria.includes("send") ||
         aria.includes("submit") ||
+                aria.includes("Search") ||
+        aria.includes("search") ||
         testid.includes("submit") ||
         testid.includes("chat-submit") ||
         testid.includes("groksend") ||
