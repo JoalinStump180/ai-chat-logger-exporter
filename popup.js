@@ -1,4 +1,4 @@
-
+﻿
 function parseRange(s) {
   const m = String(s || "1:10").trim().match(/^(\d+)\s*:\s*(\d+)$/);
   if (!m) return { from: 1, to: 10 };
@@ -53,6 +53,27 @@ document.getElementById("optLogAsks")?.addEventListener("change", saveOpts);
 document.getElementById("optSeenAsks")?.addEventListener("change", saveOpts);
 document.getElementById("optSeenAnswers")?.addEventListener("change", saveOpts);
 document.getElementById("optSeenDebug")?.addEventListener("change", saveOpts);
+
+
+const flags = ["flag1", "flag2", "flag3"];
+
+// Load
+chrome.storage.local.get(flags, (bag) => {
+  flags.forEach(id => {
+    document.getElementById(id).checked = !!bag[id];
+  });
+});
+
+// Save on change
+flags.forEach(id => {
+  document.getElementById(id).addEventListener("change", (e) => {
+    chrome.storage.local.set({ [id]: e.target.checked });
+  });
+});
+
+
+
+
 loadOpts();
 
 (async () => {

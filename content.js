@@ -1,6 +1,30 @@
 ﻿(function () {
   "use strict";
 let lastActiveComposer = null;
+
+
+let flags = { flag1: false, flag2: false, flag3: false };
+
+chrome.storage.local.get(["flag1", "flag2", "flag3"], (bag) => {
+  flags.flag1 = !!bag.flag1;
+  flags.flag2 = !!bag.flag2;
+  flags.flag3 = !!bag.flag3;
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.flag1) flags.flag1 = !!changes.flag1.newValue;
+  if (changes.flag2) flags.flag2 = !!changes.flag2.newValue;
+  if (changes.flag3) flags.flag3 = !!changes.flag3.newValue;
+});
+
+
+
+
+
+
+
+
   const host = location.hostname;
   const platform =
     host.includes("gemini") ? "gemini" :
@@ -16,7 +40,7 @@ let lastActiveComposer = null;
         return m && location.href.startsWith(m[1]);
       }));
       if (!hit) return;
-     alert("hit's val is " + (hit.text || ""));
+    if (flags.flag1) alert("hit's val is " + (hit.text || ""));
  
  
  
@@ -29,7 +53,7 @@ let lastActiveComposer = null;
         const el = findComposer();
          
         const text = getText(el);
-        alert('text document.addEventListener is ' + (text || ""));
+       if (flags.flag1)  alert('text document.addEventListener is ' + (text || ""));
         if (!text) return;
         const u = new URL(location.href);
         u.hash = "";

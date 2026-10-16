@@ -306,8 +306,6 @@ function parseSearch(q) {
   return { tokens, urlIds };
 }
 
-function parseQuery(q) { return parseSearch(q).tokens; }
-
 function tokLow(t) { return typeof t === "string" ? t : t.low; }
 function hayHasAll(hay, tokens) {
   if (!tokens.length) return true;
@@ -521,14 +519,10 @@ function pttNode(opts) {
 
 function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
 
-
- 
   const tag = kind === "onMsg" ? ("onMsg#" + c.localIndex) : ("ask#" + c.localIndex);
   const nid = kind + "-" + (c.recordKey || c.localIndex);
   if (convKey) nidToConvKey.set(nid, convKey);
 
-
- 
   const seenAns = (c.answers || []).some((a) => a.source === "seen");
   const kidsHtml = (kind !== "onMsg" && (includeImpAns || seenAns) && (c.answers || []).some((a) => inTime(a.ts)))
     ? (c.answers || []).filter((a) => inTime(a.ts) && (includeImpAns || a.source === "seen")).map(function (a) {
@@ -696,29 +690,6 @@ function groupItems(items) {
 }
 
 
-
-
-function itemRowHtml(it, tokens) {
-  const nid = it.kind + "-" + (it.recordKey || it.localIndex);
-  if (it.convKey) nidToConvKey.set(nid, it.convKey); // <--- Add this at the top
-  
-  const tag = it.kind === "onMsg" ? ("onMsg#" + it.localIndex) : ("ask#" + it.localIndex);
-  return '<tr class="item-row" data-ck="' + esc(it.convKey) + '" data-nid="' + esc(nid) + '">' +
-    "<td>" + esc(fmtTs(it.ts)) + "</td><td>" + esc(it.session.platform) + "</td>" +
-    '<td><span class="ptt-label-wrap">' + hitDotHtml(nid) + '<span class="ptt-tag">' + esc(tag) + '</span>' + messageToggleHtml(it.text || "", nid, false) + '</span>  ' + messageContentHtml(it.text || "", tokens, nid, false) + "</td>" +
-    '<td title="' + esc(it.session.url) + '">' + esc(it.session.conversationId || it.session.url || "") + "</td>" +
-    "<td></td><td></td></tr>";
-}
-function itemRowHtml2(it, tokens) {
-  const tag = it.kind === "onMsg" ? ("onMsg#" + it.localIndex) : ("ask#" + it.localIndex);
-  const nid = it.kind + "-" + (it.recordKey || it.localIndex);
-  return '<tr class="item-row" data-ck="' + esc(it.convKey) + '" data-nid="' + esc(nid) + '">' +
-    "<td>" + esc(fmtTs(it.ts)) + "</td><td>" + esc(it.session.platform) + "</td>" +
-    '<td><span class="ptt-label-wrap">' + hitDotHtml(nid) + '<span class="ptt-tag">' + esc(tag) + '</span>' + messageToggleHtml(it.text || "", nid, false) + '</span>  ' + messageContentHtml(it.text || "", tokens, nid, false) + "</td>" +
-    '<td title="' + esc(it.session.url) + '">' + esc(it.session.conversationId || it.session.url || "") + "</td>" +
-    "<td></td><td></td></tr>";
-}
-
 function bannerRowHtml(session) {
   return '<tr class="banner' + (session.id === selectedId ? " sel" : "") + '" data-id="' + session.id + '" data-ck="' + esc(session.convKey) + '">' +
     "<td>" + esc(fmtTs(rowTs(session))) + "</td><td>" + esc(session.platform) + "</td>" +
@@ -726,12 +697,6 @@ function bannerRowHtml(session) {
     '<td title="' + esc(session.url) + '">' + esc(session.conversationId || session.url || "") + "</td>" +
     "<td>" + (viewAsks(session.convKey).length || session.askCount || 0) + "</td><td>" + session.id + "</td></tr>";
 }
-
-
-
-
-
-
 
 function datetimeItemNid(it) {
   return it.kind + "-" + (it.recordKey || it.localIndex);
@@ -851,66 +816,12 @@ function appendDateTimeBatch(direction) {
   }
   $("status").textContent = (dtEnd - dtStart) + " of " + datetimeItems.length + " chronological items loaded";
 }
-function appendDateTimeBatch2(direction) {
-  if (middleMode !== "item" || !datetimeItems.length) return;
-  const tb = $("dateTimeView");
-  const tokens = parseSearch($("q").value).tokens;
-  if (direction === "down" && dtEnd < datetimeItems.length) {
-    const oldEnd = dtEnd;
-    dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
-    tb.insertAdjacentHTML("beforeend", datetimeRangeHtml(oldEnd, dtEnd, tokens));
-  } else if (direction === "up" && dtStart > 0) {
-    const oldStart = dtStart;
-    const nextStart = Math.max(0, dtStart - DT_BATCH);
-    const beforeHeight = $(".listwrap").scrollHeight;
-    tb.insertAdjacentHTML("afterbegin", datetimeRangeHtml(nextStart, oldStart, tokens));
-    dtStart = nextStart;
-    // Keep the same content under the user's eyes after prepending rows.
-    $(".listwrap").scrollTop += $(".listwrap").scrollHeight - beforeHeight;
-  } else if (direction === "up" && dtStart === 0) {
-    // At the newest edge, refresh the source data to discover items created
-    // after this pane's chronological snapshot was built.
-    refreshDateTimeHead();
-  }
-  $("status").textContent = (dtEnd - dtStart) + " of " + datetimeItems.length + " chronological items loaded";
-}
 
 function renderItemMode(tokens) {
   // A fresh search/filter invalidates the cached chronological list; ordinary
   // pane switching reuses it and does not rebuild the DOM.
   buildDateTimeItems(tokens);
   renderDateTimeWindow(selectedNid, false);
-}
-
-
-
-function renderItemMode2 (tokens) {
-  const items = collectItems(matched, tokens);
-  const groups = groupItems(items);
-  const tb = $("tbody");
-  tb.innerHTML = "";
-  const html = [];
-  groups.forEach(function (g) {
-    html.push(bannerRowHtml(g.session));
-    if (dispStyle === "ptt") {
-      const ptt = g.items.map(function (it) {
-        const fake = {
-          localIndex: it.localIndex,
-          ts: it.ts,
-          text: it.text,
-          recordKey: it.recordKey,
-          answers: []
-        };
-        return pttAskNode(fake, tokens, false, it.kind, g.convKey);
-      }).join("");
-      html.push('<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>");
-    } else {
-      g.items.forEach(function (it) { html.push(itemRowHtml(it, tokens)); });
-    }
-  });
-  tb.innerHTML = html.join("");
-  $("empty").hidden = groups.length > 0;
-  $("status").textContent = items.length + " items in " + groups.length + " groups";
 }
 
 function getVisibleItems() {
@@ -922,8 +833,6 @@ function clearItemSelection() {
   document.querySelectorAll("#titleView .ptt-selected, #dateTimeView .ptt-selected").forEach(function (el) { el.classList.remove("ptt-selected"); });
 }
 
-
-
 function findConvForNid(nid) {
   // 1. Check DOM first if visible
   const el = document.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"][data-ck], tr.item-row[data-nid="' + CSS.escape(nid) + '"][data-ck]');
@@ -934,21 +843,6 @@ function findConvForNid(nid) {
 
   return null;
 }
-
-function findConvForNid2(nid) {
-  const el = document.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"][data-ck], tr.item-row[data-nid="' + CSS.escape(nid) + '"][data-ck]');
-  if (el && el.dataset.ck) return el.dataset.ck;
-  let found = null;
-  asksByConv.forEach(function (list, ck) {
-    if (found) return;
-    if (list.some(function (c) {
-      return (c.recordKey && String(nid).indexOf(c.recordKey) >= 0) || String(nid).endsWith("-" + c.localIndex);
-    })) found = ck;
-  });
-  return found;
-}
-
-let pendingScroll = false;
 
 function selectItemByNid(nid, scroll = false, scrollMode = "center") {
   if (!nid) return false;
@@ -1001,130 +895,6 @@ function selectItemByNid(nid, scroll = false, scrollMode = "center") {
   return true;
 }
 
-function selectItemByNid5(nid, scroll) {
-  if (!nid) return;
-  selectedNid = nid;
-  const ck = findConvForNid(nid);
-  const needsExpand = ck && !openChats.has(ck) && middleMode === "ptt";
-  if (needsExpand) {
-    openChats.add(ck);
-    renderSlice(false);
-    return;
-  }
-  clearItemSelection();
-  const el = document.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"], tr.item-row[data-nid="' + CSS.escape(nid) + '"]');
-  if (!el && ck && middleMode === "ptt" && !openChats.has(ck)) {
-    openChats.add(ck);
-    renderSlice(false);
-    return;
-  }
-  if (!el) return;
-  el.classList.add("ptt-selected");
-
-  // If scrolling is explicitly requested, ensure it centers correctly
-  if (scroll) {
-    const listwrap = document.querySelector('.listwrap');
-    const rect = el.getBoundingClientRect();
-    const parentRect = listwrap.getBoundingClientRect();
-    const isVisible = (rect.top >= parentRect.top) && (rect.bottom <= parentRect.bottom);
-    
-    // Scroll if out of view, or if it's an explicit view-switch/jump command
-    if (!isVisible) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }
-}
-
-function selectItemByNid4(nid, scroll) {
-  if (!nid) return;
-  selectedNid = nid;
-  const ck = findConvForNid(nid);
-  const needsExpand = ck && !openChats.has(ck) && middleMode === "ptt";
-  if (needsExpand) {
-    openChats.add(ck);
-    renderSlice(false);
-    return;
-  }
-  clearItemSelection();
-  const el = document.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"], tr.item-row[data-nid="' + CSS.escape(nid) + '"]');
-  if (!el && ck && middleMode === "ptt" && !openChats.has(ck)) {
-    openChats.add(ck);
-    renderSlice(false);
-    return;
-  }
-  if (!el) return;
-  el.classList.add("ptt-selected");
-
-  // Only scroll if requested AND the element is out of the current viewport view
-  if (scroll) {
-    const listwrap = document.querySelector('.listwrap');
-    const rect = el.getBoundingClientRect();
-    const parentRect = listwrap.getBoundingClientRect();
-    const isVisible = (rect.top >= parentRect.top) && (rect.bottom <= parentRect.bottom);
-    if (!isVisible) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }
-}
-
-
-
-function selectItemByNid3(nid, scroll) {
-  if (!nid) return;
-  selectedNid = nid;
-  if (scroll) pendingScroll = true;
-  const ck = findConvForNid(nid);
-  const needsExpand = ck && !openChats.has(ck) && middleMode === "ptt";
-  if (needsExpand) {
-    openChats.add(ck);
-    renderSlice(true);
-    return;
-  }
-  clearItemSelection();
-  const el = document.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"], tr.item-row[data-nid="' + CSS.escape(nid) + '"]');
-  if (!el && ck && middleMode === "ptt" && !openChats.has(ck)) {
-    openChats.add(ck);
-    renderSlice(true);
-    return;
-  }
-  if (!el) return;
-  el.classList.add("ptt-selected");
-  
-  // Force scroll into view when switching or selecting
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
-}
-
-
-
-
-
-
-function selectItemByNid2(nid, scroll) {
-  if (!nid) return;
-  selectedNid = nid;
-  if (scroll) pendingScroll = true;
-  const ck = findConvForNid(nid);
-  const needsExpand = ck && !openChats.has(ck) && middleMode === "ptt";
-  if (needsExpand) {
-    openChats.add(ck);
-    renderSlice(true);
-    return;
-  }
-  clearItemSelection();
-  const el = document.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"], tr.item-row[data-nid="' + CSS.escape(nid) + '"]');
-  if (!el && ck && middleMode === "ptt" && !openChats.has(ck)) {
-    openChats.add(ck);
-    renderSlice(true);
-    return;
-  }
-  if (!el) return;
-  el.classList.add("ptt-selected");
-  if (pendingScroll) {
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
-    pendingScroll = false;
-  }
-}
-
 function jumpItem(delta) {
   const items = getVisibleItems();
   if (!items.length) return;
@@ -1163,13 +933,6 @@ function paintHits(tokens) {
   }).join("");
 }
 
-
-
-
- 
-
-
-
 function renderSlice(reset) {
   if (middleMode === "item") {
     if (reset || !datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
@@ -1178,52 +941,6 @@ function renderSlice(reset) {
     return;
   }
   const tb = $("titleView");
-  if (reset) { shown = 0; tb.innerHTML = ""; }
-  const next = matched.slice(shown, shown + PAGE);
-  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
-  shown += next.length;
-  $("empty").hidden = matched.length > 0;
-  $("status").textContent = shown + " of " + matched.length + " shown";
-  updateHeaderIndicators();
-  if (selectedNid) selectItemByNid(selectedNid, false);
-}
-
-
-function renderSlice3(reset) {
-  if (middleMode === "item") {
-    const tokens = parseSearch($("q").value).tokens;
-    renderItemMode(tokens);
-    updateHeaderIndicators();
-    if (selectedNid) selectItemByNid(selectedNid, true); // Scroll to item
-    return;
-  }
-  // ptt / session mode
-  const tb = $("tbody");
-  if (reset) { shown = 0; tb.innerHTML = ""; }
-  const next = matched.slice(shown, shown + PAGE);
-  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
-  shown += next.length;
-  $("empty").hidden = matched.length > 0;
-  $("status").textContent = shown + " of " + matched.length + " shown";
-  updateHeaderIndicators();
-  if (selectedNid) selectItemByNid(selectedNid, true); // Scroll to item
-}
-
-
-
-
-
-
-function renderSlice2(reset) {
-  if (middleMode === "item") {
-    const tokens = parseSearch($("q").value).tokens;
-    renderItemMode(tokens);
-    updateHeaderIndicators();
-    if (selectedNid) selectItemByNid(selectedNid, false);
-    return;
-  }
-  // ptt / session mode
-  const tb = $("tbody");
   if (reset) { shown = 0; tb.innerHTML = ""; }
   const next = matched.slice(shown, shown + PAGE);
   if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
@@ -1679,31 +1396,6 @@ function jumpToItemByNid(nid, scroll = true, scrollMode = "center") {
   });
 }
 
-function jumpToItemByNid2(nid, scroll) {
-  if (!nid) return;
-  const index = matched.findIndex(it => {
-    const itemNid = it.kind + "-" + (it.recordKey || it.localIndex);
-    return itemNid === nid;
-  });
-  if (index === -1) return;
-
-  if (index >= shown) {
-    shown = Math.ceil((index + 1) / PAGE) * PAGE;
-    const tb = $("tbody");
-    tb.innerHTML = "";
-    const next = matched.slice(0, shown);
-    tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
-    $("status").textContent = shown + " of " + matched.length + " shown";
-  }
-
-  // Wait for the next browser paint frame so the DOM nodes are fully laid out
-  requestAnimationFrame(() => {
-    selectItemByNid(nid, scroll);
-  });
-}
-
-
-
 $("dispMode").addEventListener("change", function () {
   dispStyle = this.value === "flat" ? "flat" : "ptt";
   seek($("q").value);
@@ -1724,21 +1416,17 @@ $("unfoldAsksBtn").onclick = function () { batchAskOpen = true; matched.forEach(
 $("foldAnsBtn").onclick = function () { batchAnsOpen = false; openAns.clear(); forceOpenAsk.clear(); seek($("q").value); };
 $("unfoldAnsBtn").onclick = function () { batchAnsOpen = true; matched.forEach((r) => openAns.add(r.convKey)); seek($("q").value); };
 
-document.querySelector(".listwrap").addEventListener("scroll", function (e) {
+if (0) document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   const el = e.target;
   if (middleMode === "item") {
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) enforceSlidingWindow("down");
-    //if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) appendDateTimeBatch("down");
     else if (el.scrollTop < 80) enforceSlidingWindow("up");
-    //else if (el.scrollTop < 80) appendDateTimeBatch("up");
   } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40 && shown < matched.length) {
     renderSlice(false);
   }
 });
 
-
-
-document.addEventListener("keydown", function (e) {
+if (0) document.addEventListener("keydown", function (e) {
   if (e.key === "PageUp") {
     if (middleMode === "item") {
       const wrap = document.querySelector(".listwrap");
@@ -1749,9 +1437,6 @@ document.addEventListener("keydown", function (e) {
     }
   }
 });
-
-
-
 
 function patternLen(q) {
   let s = String(q == null ? "" : q);
@@ -2086,7 +1771,7 @@ document.querySelector(".side").addEventListener("contextmenu", function (e) {
 });
 // YouTube-style copy behavior: when a user selects text in a folded message,
 // Ctrl+C copies the canonical full message text rather than only the visible preview.
-document.addEventListener("copy", function (e) {
+if (0) document.addEventListener("copy", function (e) {
   const selection = window.getSelection && window.getSelection();
   if (!selection || selection.isCollapsed || !e.clipboardData) return;
 
@@ -2138,8 +1823,6 @@ $("sideDelete").addEventListener("click", function () {
   paintSideRoutes();
 });
 
-
-
  let isScrollFetching = false;
 
 document.querySelector(".listwrap").addEventListener("scroll", function (e) {
@@ -2183,85 +1866,9 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
 });
  
 const MAX_WINDOW = 300; // Can safely handle small or large windows now
- 
- 
- 
+
  let isSliding = false;
- 
 
- 
- 
-function enforceSlidingWindow7(direction) {
-
-
-  if (isSliding) return;
- isSliding = true;
- 
-  if (middleMode !== "item" || !datetimeItems.length) return;
-  const tb = $("dateTimeView");
-  const wrap = document.querySelector(".listwrap");
-  const tokens = parseSearch($("q").value).tokens;
-
-  if (datetimeItems.length <= MAX_WINDOW) {
-    if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
-      dtStart = 0;
-      dtEnd = datetimeItems.length;
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-    }
-    return;
-  }
-
-  if (direction === "down") {
-    if (dtEnd < datetimeItems.length) {
-      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
-      // Enforce maximum window size by shifting dtStart forward if needed
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        dtStart = dtEnd - MAX_WINDOW;
-      }
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-    }
-  } else if (direction === "up") {
-    if (dtStart > 0) {
-      const beforeHeight = wrap ? wrap.scrollHeight : 0;
-      dtStart = Math.max(0, dtStart - DT_BATCH);
-      // Enforce maximum window size by shifting dtEnd backward if needed
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        dtEnd = dtStart + MAX_WINDOW;
-      }
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
-    } else {
-      refreshDateTimeHead();
-      return;
-    }
-  }
-
-  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
- 
-  
-   
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        isSliding = false;
-        console.log("--> rAF reached: isSliding is now   == ",isSliding);
-        
-        
-        
-        
-        
-        
-        
-      });
-    });
-}
-
-
- 
- 
- 
- 
- 
- 
 function enforceSlidingWindow(direction) {
   if (isSliding) return;
   isSliding = true;
@@ -2310,7 +1917,7 @@ function enforceSlidingWindow(direction) {
           wrap.scrollTop += wrap.scrollHeight - beforeHeight;
         }
       } else {
-        refreshDateTimeHead();
+        // refreshDateTimeHead();
         return;
       }
     }
@@ -2323,237 +1930,6 @@ function enforceSlidingWindow(direction) {
     console.log("--> enforceSlidingWindow finished: isSliding =", isSliding);
   }
 }
- 
- 
- 
- 
-function enforceSlidingWindow_correct_bak(direction) {
-  if (middleMode !== "item" || !datetimeItems.length) return;
-  const tb = $("dateTimeView");
-  const wrap = document.querySelector(".listwrap");
-  const tokens = parseSearch($("q").value).tokens;
-
-  if (datetimeItems.length <= MAX_WINDOW) {
-    if (dtStart !== 0 || dtEnd !== datetimeItems.length) {
-      dtStart = 0;
-      dtEnd = datetimeItems.length;
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-    }
-    return;
-  }
-
-  if (direction === "down") {
-    if (dtEnd < datetimeItems.length) {
-      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
-      // Enforce maximum window size by shifting dtStart forward if needed
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        dtStart = dtEnd - MAX_WINDOW;
-      }
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-    }
-  } else if (direction === "up") {
-    if (dtStart > 0) {
-      const beforeHeight = wrap ? wrap.scrollHeight : 0;
-      dtStart = Math.max(0, dtStart - DT_BATCH);
-      // Enforce maximum window size by shifting dtEnd backward if needed
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        dtEnd = dtStart + MAX_WINDOW;
-      }
-      tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
-    } else {
-      refreshDateTimeHead();
-      return;
-    }
-  }
-
-  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
-}
- 
-
-function enforceSlidingWindow3(direction) {
-  if (middleMode !== "item" || !datetimeItems.length) return;
-  const tb = $("dateTimeView");
-  const wrap = document.querySelector(".listwrap");
-  const tokens = parseSearch($("q").value).tokens;
-
-  if (datetimeItems.length <= MAX_WINDOW) {
-    appendDateTimeBatch(direction);
-    return;
-  }
-
-  if (direction === "down") {
-    if (dtEnd < datetimeItems.length) {
-      const oldEnd = dtEnd;
-      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
-      
-      // Append new batch to the bottom
-      const groups = groupItems(datetimeItems.slice(oldEnd, dtEnd));
-      let html = "";
-      groups.forEach(g => {
-        html += bannerRowHtml(g.session);
-        const ptt = g.items.map(it => pttAskNode({ localIndex: it.localIndex, ts: it.ts, text: it.text, recordKey: it.recordKey, answers: [] }, tokens, false, it.kind, g.convKey)).join("");
-        html += '<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>";
-      });
-      tb.insertAdjacentHTML("beforeend", html);
-
-      // Truncate from the top if we exceed MAX_WINDOW (remove group banner + cmt-row pairs)
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        const excess = (dtEnd - dtStart) - MAX_WINDOW;
-        // Approximate group removal from top
-        let removed = 0;
-        while (removed < excess && tb.children.length >= 2) {
-          const banner = tb.firstElementChild;
-          const cmt = banner ? banner.nextElementSibling : null;
-          if (banner) banner.remove();
-          if (cmt && cmt.classList.contains("cmt-row")) {
-            cmt.remove();
-            removed++;
-          }
-          dtStart++;
-        }
-      }
-    }
-  } else if (direction === "up") {
-    if (dtStart > 0) {
-      const oldStart = dtStart;
-      const nextStart = Math.max(0, dtStart - DT_BATCH);
-      const beforeHeight = wrap ? wrap.scrollHeight : 0;
-
-      const groups = groupItems(datetimeItems.slice(nextStart, oldStart));
-      let html = "";
-      groups.forEach(g => {
-        html += bannerRowHtml(g.session);
-        const ptt = g.items.map(it => pttAskNode({ localIndex: it.localIndex, ts: it.ts, text: it.text, recordKey: it.recordKey, answers: [] }, tokens, false, it.kind, g.convKey)).join("");
-        html += '<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>";
-      });
-      
-      tb.insertAdjacentHTML("afterbegin", html);
-      dtStart = nextStart;
-      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
-
-      // Truncate from the bottom if we exceed MAX_WINDOW
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        const excess = (dtEnd - dtStart) - MAX_WINDOW;
-        let removed = 0;
-        while (removed < excess && tb.children.length >= 2) {
-          const cmt = tb.lastElementChild;
-          const banner = cmt ? cmt.previousElementSibling : null;
-          if (cmt) cmt.remove();
-          if (banner && banner.classList.contains("banner")) {
-            banner.remove();
-            removed++;
-          }
-          dtEnd--;
-        }
-      }
-    } else {
-      refreshDateTimeHead();
-      return;
-    }
-  }
-  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
-}
-function enforceSlidingWindow2(direction) {
-  if (middleMode !== "item" || !datetimeItems.length) return;
-  const tb = $("dateTimeView");
-  const wrap = document.querySelector(".listwrap");
-  const tokens = parseSearch($("q").value).tokens;
-  
-  if (datetimeItems.length <= MAX_WINDOW) {
-    appendDateTimeBatch(direction);
-    return;
-  }
-
-  if (direction === "down") {
-    if (dtEnd < datetimeItems.length) {
-      const oldEnd = dtEnd;
-      dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
-      tb.insertAdjacentHTML("beforeend", datetimeRangeHtml(oldEnd, dtEnd, tokens));
-      
-      // Truncate from top if window exceeds max capacity
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        const removeCount = dtEnd - dtStart - MAX_WINDOW;
-        for (let i = 0; i < removeCount; i++) {
-          const firstGroup = tb.firstElementChild;
-          if (firstGroup) firstGroup.remove();
-        }
-        dtStart += removeCount;
-      }
-    }
-  } else if (direction === "up") {
-    if (dtStart > 0) {
-      const oldStart = dtStart;
-      const nextStart = Math.max(0, dtStart - DT_BATCH);
-      const beforeHeight = wrap ? wrap.scrollHeight : 0;
-      
-      tb.insertAdjacentHTML("afterbegin", datetimeRangeHtml(nextStart, oldStart, tokens));
-      dtStart = nextStart;
-      if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
-      
-      // Truncate from bottom if window exceeds max capacity
-      if (dtEnd - dtStart > MAX_WINDOW) {
-        const removeCount = dtEnd - dtStart - MAX_WINDOW;
-        dtEnd -= removeCount;
-        for (let i = 0; i < removeCount; i++) {
-          const lastGroup = tb.lastElementChild;
-          if (lastGroup) lastGroup.remove();
-        }
-      }
-    } else {
-      refreshDateTimeHead();
-    }
-  }
-  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
-}
-function enforceSlidingWindow1(direction) {
-  if (middleMode !== "item" || !datetimeItems.length) return;
-  const tb = $("dateTimeView");
-  const wrap = document.querySelector(".listwrap");
-  const tokens = parseSearch($("q").value).tokens;
-
-  if (datetimeItems.length <= MAX_WINDOW) {
-    appendDateTimeBatch(direction);
-    return;
-  }
-
-  if (direction === "down" && dtEnd < datetimeItems.length) {
-    dtEnd = Math.min(datetimeItems.length, dtEnd + DT_BATCH);
-    if (dtEnd - dtStart > MAX_WINDOW) {
-      dtStart = Math.max(0, dtEnd - MAX_WINDOW); // Truncate from top
-    }
-    tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-  } else if (direction === "up" && dtStart > 0) {
-    const beforeHeight = wrap ? wrap.scrollHeight : 0;
-    dtStart = Math.max(0, dtStart - DT_BATCH);
-    if (dtEnd - dtStart > MAX_WINDOW) {
-      dtEnd = Math.min(datetimeItems.length, dtStart + MAX_WINDOW); // Truncate from bottom
-    }
-    tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
-    if (wrap) wrap.scrollTop += wrap.scrollHeight - beforeHeight;
-  } else if (direction === "up" && dtStart === 0) {
-    refreshDateTimeHead();
-    return;
-  }
-
-  $("status").textContent = `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Ctrl-hover popup: parent session, site, and exact hovered item information.
 (function initCtrlHoverChatInfo() {
