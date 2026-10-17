@@ -936,7 +936,9 @@ function paintHits(tokens) {
 function renderSlice(reset) {
   if (middleMode === "item") {
     if (reset || !datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
-    else if (selectedNid && !$("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedNid) + '"]')) renderDateTimeWindow(selectedNid, false);
+     
+    //else if (selectedNid && !$("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedNid) + '"]')) renderDateTimeWindow(selectedNid, false);
+    else if (selectedNid ) renderDateTimeWindow(selectedNid, true);
     updateHeaderIndicators();
     return;
   }
@@ -2022,7 +2024,7 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40 && shown < matched.length) {
   
   // renderSlice(false);   ---this is needed by the title pane,   if without this , title pane 's down scroll appending becomes stutter . ---by jcx
-   //renderSlice(false);
+   renderSlice(false);
   }
 });
  
@@ -2078,13 +2080,13 @@ function enforceSlidingWindow(direction) {
           wrap.scrollTop += wrap.scrollHeight - beforeHeight;
         }
       } else {
-        // refreshDateTimeHead();
+         //refreshDateTimeHead();
         return;
       }
     }
 
-    $("status").textContent =
-      `Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
+    $("status").textContent =  
+      `  Showing items ${dtStart} to ${dtEnd} of ${datetimeItems.length} (Sliding window active)`;
 
   } finally {
     isSliding = false;

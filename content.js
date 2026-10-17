@@ -573,7 +573,7 @@ document.addEventListener("focus", (e) => {
   const el = e.target;
   if (isEditable(el) && isVisible(el)) {
     lastActiveComposer = el;
-     lastComposerText = getText(el);  
+     //lastComposerText = getText(el);  
   }
 });
 
@@ -581,7 +581,7 @@ document.addEventListener("input", (e) => {
   const el = e.target;
   if (isEditable(el) && isVisible(el)) {
     lastActiveComposer = el;
-    lastComposerText = getText(el);   // also update text
+    //lastComposerText = getText(el);   // also update text
   }
 });
 
@@ -589,7 +589,7 @@ document.addEventListener("focusin", (e) => {
   const el = e.target;
   if (isEditable(el) && isVisible(el)) {
     lastActiveComposer = el;
-     lastComposerText = getText(el);  
+     //lastComposerText = getText(el);  
   }
 });
 
@@ -598,7 +598,7 @@ document.addEventListener("paste", (e) => {
   if (isEditable(el) && isVisible(el)) {
     lastActiveComposer = el;
     requestAnimationFrame(() => {
-      lastComposerText = getText(el);
+      //lastComposerText = getText(el);
     });
   }
 });
@@ -632,7 +632,7 @@ document.addEventListener("paste", (e) => {
   // --------------------------------------------------
   // mousedown: only store text, do NOT call logAsk
   // --------------------------------------------------
-  document.addEventListener("mousedown", (e) => {
+  if  (0) document.addEventListener("mousedown", (e) => {
     const el = (lastActiveComposer && isVisible(lastActiveComposer))
       ? lastActiveComposer
       : findComposer();
@@ -651,7 +651,7 @@ document.addEventListener("paste", (e) => {
     if (!(target instanceof Node)) return;
     if (target !== el && !el.contains(target)) return;
 
-    const text = lastComposerText || getComposerText(el);
+    const text =   getComposerText(el);
     logAsk(text, "enter");
   }, true);
 
@@ -683,7 +683,8 @@ document.addEventListener("paste", (e) => {
     });
     if (!isSend) return;
 
-    const text = mousedownText || lastComposerText || getComposerText(findComposer());
+    //const text = mousedownText || lastComposerText || getComposerText(findComposer());
+    const text =mousedownText || lastComposerText;
     logAsk(text, "send");
   }, true);
 

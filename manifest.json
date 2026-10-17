@@ -8,6 +8,12 @@
     "https://*/*",
     "http://*/*"
   ],
+  
+  
+  
+  
+  
+  
   "background": {
     "service_worker": "background.js"
   },
@@ -36,7 +42,7 @@
         "https://*/*",
         "http://*/*"
       ],
-      "js": ["content.js"],
+      "js": [  "content.js"],
       "run_at": "document_idle"
     }
   ],

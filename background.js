@@ -246,7 +246,7 @@ async function rebindPending(payload) {
       const stale = records.find((r) => r.convKey === key);
       if (stale && stale.id != null) await deleteRecord(stale.id);
     }
-    await refreshCache();
+   // await refreshCache();
   }
   return { ok: true, moved };
 }
@@ -322,7 +322,7 @@ async function upsertConversation(payload) {
     }
   }
 
-  await refreshCache();
+ // await refreshCache();
   return { ok: true, savedAsk, convKey, askKey: askMeta && askMeta.recordKey, askLocalIndex: askMeta && askMeta.localIndex };
 }
 
@@ -403,7 +403,7 @@ async function importTurns(payload) {
     rec.updatedAt = Date.now();
     await putRecord(rec);
   }
-  await refreshCache();
+ // await refreshCache();
   return { ok: true, asksAdded, answersAdded, askTotal: allAsks.length, answerTotal: allAns.length };
 }
 
@@ -435,7 +435,7 @@ async function deleteRecord(id) {
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
-  await refreshCache();
+ // await refreshCache();
 }
 
 
@@ -466,7 +466,7 @@ async function logSeen(payload) {
       const rec = await findByConvKey(convKey);
       if (rec) { rec.askCount = (rec.askCount || 0) + 1; await putRecord(rec); }
     }
-    await refreshCache();
+   // await refreshCache();
     return { ok: true, added: meta.added, recordKey: meta.recordKey };
   }
   let askKey = "";
@@ -495,7 +495,7 @@ async function logSeen(payload) {
     const rec = await findByConvKey(convKey);
     if (rec) { rec.answerCount = (rec.answerCount || 0) + 1; await putRecord(rec); }
   }
-  await refreshCache();
+ // await refreshCache();
   return { ok: true, added: meta.added, recordKey: meta.recordKey };
 }
 
@@ -520,7 +520,7 @@ async function updateNodeText(payload) {
     };
     tx.onerror = () => reject(tx.error);
   });
-  if (updated) await refreshCache();
+  if (updated)// await refreshCache();
   return { ok: true, updated };
 }
 
@@ -580,7 +580,7 @@ async function recycleNode(payload) {
   const savedKind = recordKey.includes("|onMsg|") ? "onMsg" : kind;
   const one = await recycleOne(recordKey, savedKind);
   if (!one) return { ok: false, reason: "missing", removed };
-  await refreshCache();
+ // await refreshCache();
   return { ok: true, id: one.id, deletedAt: one.deletedAt, removed };
 }
 
@@ -650,7 +650,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await putRecord(rec);
         }
       }
-      await refreshCache();
+     // await refreshCache();
       sendResponse({ ok: true, added: meta.added, localIndex: meta.localIndex, convKey: conv.convKey });
     })().catch((err) => sendResponse({ error: String(err) }));
     return true;
