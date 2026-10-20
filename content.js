@@ -1,6 +1,8 @@
 ﻿(function () {
   "use strict";
 let lastActiveComposer = null;
+  let lastComposerText = "";
+  let mousedownText = "";          // filled on mousedown, used by Send
 
 
 let flags = { flag1: false, flag2: false, flag3: false };
@@ -20,7 +22,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 
 
-
+  // --------------------------------------------------
+  // mousedown: only store text, do NOT call logAsk
+  // --------------------------------------------------
+  if  (1) document.addEventListener("mousedown", (e) => {
+    const el = (lastActiveComposer && isVisible(lastActiveComposer))
+      ? lastActiveComposer
+      : findComposer();
+    mousedownText = el ? getComposerText(el) : "";
+    // intentionally no logAsk here
+  }, true);
 
 
 
@@ -30,16 +41,91 @@ chrome.storage.onChanged.addListener((changes, area) => {
     host.includes("gemini") ? "gemini" :
     host.includes("grok") || host === "x.com" ? "grok" :
     (host.includes("chatgpt") || host.includes("openai")) ? "chatgpt" :
+    //(host.includes("notebook") || host.includes("notebook")) ? "notebook" :
     null;
 
    if (!platform) {
     chrome.storage.local.get("sideRoutes", (bag) => {
       const rules = Array.isArray(bag.sideRoutes) ? bag.sideRoutes : [];
-      const hit = rules.find((item) => String(item.text || "").split(/\n/).some((line) => {
+      const findRouteHit = (routeRules) => routeRules.find((item) => String(item.text || "").split(/\r?\n/).some((line) => {
         const m = line.trim().match(/^onMsg:(\S+)/i);
         return m && location.href.startsWith(m[1]);
       }));
+      let hit = findRouteHit(rules);
       if (!hit) return;
+
+      // Optional per-route ancestor filters:
+      //   wldiv:token, div.classPart, div#idPart
+      //   bldiv:token, div.classPart, div#idPart
+      // Case-insensitive substring matching; blacklist always overrides whitelist.
+      function parseAncestorFilterTerms(prefix) {
+        const terms = [];
+        for (const rawLine of String(hit && hit.text || "").split(/\r?\n/)) {
+          const m = rawLine.trim().match(new RegExp("^" + prefix + "\\s*:\\s*(.*)$", "i"));
+          if (!m) continue;
+          for (const part of m[1].split(",")) {
+            const value = part.trim();
+            if (value) terms.push(value);
+          }
+        }
+        return terms;
+      }
+
+      let whiteAncestorTerms = parseAncestorFilterTerms("wldiv");
+      let blackAncestorTerms = parseAncestorFilterTerms("bldiv");
+
+      // Keep this already-open page in sync when sideRoutes / wldiv / bldiv
+      // are edited in chrome.storage.local. No page refresh is needed.
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local" || !changes.sideRoutes) return;
+        const latestRules = Array.isArray(changes.sideRoutes.newValue)
+          ? changes.sideRoutes.newValue
+          : [];
+        hit = findRouteHit(latestRules);
+        whiteAncestorTerms = parseAncestorFilterTerms("wldiv");
+        blackAncestorTerms = parseAncestorFilterTerms("bldiv");
+      });
+
+      function ancestorTermMatches(el, rawTerm) {
+        const term = String(rawTerm || "").trim().toLowerCase();
+        if (!term) return false;
+        let mode = "tag";
+        let needle = term;
+
+        // div.names means class substring "names" on a DIV.
+        // div#search (or div.id:search) means id substring "search" on a DIV.
+        if (/^div\.id:/i.test(term)) {
+          mode = "id";
+          needle = term.slice(7);
+        } else if (/^div\./i.test(term)) {
+          mode = "class";
+          needle = term.slice(4);
+        } else if (/^div#/i.test(term)) {
+          mode = "id";
+          needle = term.slice(4);
+        }
+        if (!needle) return false;
+
+        for (let node = el && el.parentElement; node && node !== document.documentElement; node = node.parentElement) {
+          const tag = String(node.localName || node.tagName || "").toLowerCase();
+          if (mode === "class") {
+            const classes = typeof node.className === "string" ? node.className : (node.getAttribute("class") || "");
+            if (tag === "div" && classes.toLowerCase().includes(needle)) return true;
+          } else if (mode === "id") {
+            if (tag === "div" && String(node.id || "").toLowerCase().includes(needle)) return true;
+          } else if (tag.includes(needle)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function passesAncestorFilters(el) {
+        if (!el) return false;
+        if (blackAncestorTerms.some((term) => ancestorTermMatches(el, term))) return false;
+        if (whiteAncestorTerms.length && !whiteAncestorTerms.some((term) => ancestorTermMatches(el, term))) return false;
+        return true;
+      }
     if (flags.flag1) alert("hit's val is " + (hit.text || ""));
  
  
@@ -49,11 +135,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
       
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
-        //const el = document.activeElement;
-        const el = findComposer();
-         
+        if (!hit) return;
+        const target = e.target;
+        const el = target instanceof HTMLElement && isEditable(target) && isVisible(target)
+          ? target
+          : findComposer();
+        if (!el || !passesAncestorFilters(el)) return;
+
         const text = getText(el);
-       if (flags.flag1)  alert('text document.addEventListener is ' + (text || ""));
+       if (flags.flag1)  alert('enterkey path for 3rd site is ' + (text || ""));
         if (!text) return;
         const u = new URL(location.href);
         u.hash = "";
@@ -69,6 +159,78 @@ chrome.storage.onChanged.addListener((changes, area) => {
           nonce: Date.now() + "-extra"
         }, () => void chrome.runtime.lastError);
       }, true);
+      
+      
+      //add click listener for 3rd party site of  mouse click there .
+    document.addEventListener("click", (e) => {
+  console.log("[DEBUG] document click handler fired");
+
+  const path = e.composedPath ? e.composedPath() : [e.target];
+
+  const isSend = path.some((el) => {
+    if (!(el instanceof Element)) return false;
+
+    const btn = el.closest("button") || el;
+    if (!(btn instanceof HTMLElement)) return false;
+
+    const testid = (btn.getAttribute("data-testid") || "").toLowerCase();
+    const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+    const text = (btn.textContent || "").trim().toLowerCase();
+
+    return (
+      testid.includes("send") ||
+      aria.includes("send") ||
+      aria.includes("submit") ||
+      aria.includes("search") ||
+      testid.includes("submit") ||
+      testid.includes("chat-submit") ||
+      testid.includes("groksend") ||
+      text === "submit" ||
+      text === "send" ||
+      (btn.type === "submit" && btn.closest("form"))
+    );
+  });
+
+  console.log("[DEBUG] isSend =", isSend);
+
+  if (!isSend) return;
+
+  const text = mousedownText || lastComposerText;
+
+  chrome.storage.local.get(["flag1"], (bag) => {
+    console.log("[DEBUG] stored flag1 =", bag.flag1);
+    console.log("[DEBUG] storage error =", chrome.runtime.lastError?.message);
+
+    if (bag.flag1) {
+      alert(
+        "mousedownText is: " + (mousedownText || "") +
+        "\nlastComposerText is: " + (lastComposerText || "")
+      );
+    }
+  });
+
+  console.log("[DEBUG] calling logAsk; text =", text);
+  logAsk(text, "send");
+}, true);
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
     });
     return;
   }
@@ -80,8 +242,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // v1.5 state (no text polling)
   // --------------------------------------------------
   //let lastActiveComposer = null;
-  let lastComposerText = "";
-  let mousedownText = "";          // filled on mousedown, used by Send
+  //let lastComposerText = "";
+  //let mousedownText = "";          // filled on mousedown, used by Send
 
   chrome.storage.local.get(["showStamps", "logAsks", "logSeenAsks", "logSeenAnswers", "showSeenDebug"], (bag) => {
     settings.showStamps = bag.showStamps !== false;
@@ -607,38 +769,109 @@ document.addEventListener("paste", (e) => {
 
 
   // --------------------------------------------------
+  // Hold asks until a real conversation id appears (from content-1.3 bindHeld)
+  // --------------------------------------------------
+  let lastSavedText = "";
+  let lastSavedAt = 0;
+  const heldAsks = [];
+  const settledPending = new Set(); // texts committed as pending after 20s; never rebind
+  let knownId = "";
+  let lastSyncedTitle = "";
+  const BIND_MS = 20000;
+
+  function settlePending(ask) {
+    settledPending.add(String(ask.text || "").replace(/\s+/g, " ").trim());
+    postLog("pending:" + ask.at, ask.text, ask.ts, ask.account, ask.source);
+  }
+
+  function isGenericTitle(raw) {
+    const bare = cleanTitle(raw).replace(/^\[[^\]]+\]\s*/, "").toLowerCase();
+    return !bare || /^(grok|chatgpt|gemini|google gemini|new chat|untitled)$/.test(bare);
+  }
+
+  function postLog(conversationId, raw, ts, account, source) {
+    const title = titledWithAccount(cleanTitle(document.title), account);
+    if (settings.logAsks && raw) convStampList.push({ text: raw, ts, conversationId });
+    chrome.runtime.sendMessage({
+      type: "log-ask",
+      platform,
+      conversationId,
+      url: sessionUrl(conversationId),
+      title,
+      account,
+      text: settings.logAsks ? raw : "",
+      source: source || "unknown",
+      logAsks: settings.logAsks,
+      ts,
+      nonce: ts + "-" + (source || "x")
+    }, () => void chrome.runtime.lastError);
+  }
+
+  function syncTitle(conversationId, rawTitle) {
+    if (!conversationId || String(conversationId).startsWith("pending:")) return;
+    const title = cleanTitle(rawTitle || document.title);
+    if (!title || isGenericTitle(title)) return;
+    const key = conversationId + "\n" + title;
+    if (key === lastSyncedTitle) return;
+    lastSyncedTitle = key;
+    chrome.runtime.sendMessage({
+      type: "sync-title",
+      platform,
+      conversationId,
+      url: sessionUrl(conversationId),
+      title: titledWithAccount(title, detectAccount()),
+      account: detectAccount(),
+      titleSync: true,
+      ts: Date.now()
+    }, () => void chrome.runtime.lastError);
+  }
+
+  function rebindPending(conversationId, texts) {
+    const live = (texts || []).filter((t) => !settledPending.has(String(t || "").replace(/\s+/g, " ").trim()));
+    if (!live.length) return;
+    chrome.runtime.sendMessage({
+      type: "rebind-pending",
+      platform,
+      conversationId,
+      url: sessionUrl(conversationId),
+      title: titledWithAccount(cleanTitle(document.title), detectAccount()),
+      account: detectAccount(),
+      texts: live,
+      ts: Date.now()
+    }, () => void chrome.runtime.lastError);
+  }
+
+  function bindHeld(id, title) {
+    if (!id || String(id).startsWith("pending:")) return;
+    knownId = id;
+    const batch = heldAsks.splice(0, heldAsks.length);
+    for (const ask of batch) postLog(id, ask.text, ask.ts, ask.account, ask.source);
+    rebindPending(id, batch.map((ask) => ask.text));
+    syncTitle(id, title || document.title);
+    loadedConv = "";
+  }
+
+  // --------------------------------------------------
   // logAsk (called only from Enter and Send)
   // --------------------------------------------------
   function logAsk(text, source) {
     text = normalizeAsk(text);
     if (!text) return;
-    const convId = getConversationId();
-    const u = new URL(location.href);
-    u.hash = "";
-    chrome.runtime.sendMessage({
-      type: "log-ask",
-      platform,
-      conversationId: convId || (u.pathname + u.search),
-      url: u.origin + u.pathname + u.search,
-      title: titledWithAccount(document.title, detectAccount()),
-      text,
-      source: source || "unknown",
-      logAsks: settings.logAsks,
-      ts: Date.now(),
-      nonce: Date.now() + "-" + (source || "x")
-    }, () => void chrome.runtime.lastError);
+    const now = Date.now();
+    if (text === lastSavedText && now - lastSavedAt < 800) return;
+    lastSavedText = text;
+    lastSavedAt = now;
+    const account = detectAccount();
+    const id = getConversationId();
+    if (id) {
+      knownId = id;
+      postLog(id, text, now, account, source);
+      return;
+    }
+    heldAsks.push({ text, ts: now, account, at: now, source: source || "unknown" });
   }
 
-  // --------------------------------------------------
-  // mousedown: only store text, do NOT call logAsk
-  // --------------------------------------------------
-  if  (0) document.addEventListener("mousedown", (e) => {
-    const el = (lastActiveComposer && isVisible(lastActiveComposer))
-      ? lastActiveComposer
-      : findComposer();
-    mousedownText = el ? getComposerText(el) : "";
-    // intentionally no logAsk here
-  }, true);
+
 
   // --------------------------------------------------
   // Enter key → logAsk
@@ -670,10 +903,10 @@ document.addEventListener("paste", (e) => {
       return (
         testid.includes("send") ||
         aria.includes("send") ||
-        aria.includes("submit") ||
+        aria.includes("submit") || aria.includes("Submit") ||
                 aria.includes("Search") ||
         aria.includes("search") ||
-        testid.includes("submit") ||
+        testid.includes("submit") || testid.includes("Submit") ||
         testid.includes("chat-submit") ||
         testid.includes("groksend") ||
         text === "submit" ||
@@ -683,8 +916,13 @@ document.addEventListener("paste", (e) => {
     });
     if (!isSend) return;
 
-    //const text = mousedownText || lastComposerText || getComposerText(findComposer());
-    const text =mousedownText || lastComposerText;
+    //const text =mousedownText || lastComposerText;
+    const text = mousedownText || lastComposerText || getComposerText(findComposer());
+            if (flags.flag1)   alert(
+        "\nmousedownText is: " + (mousedownText || "") +
+        "\nlastComposerText is: " + (lastComposerText || "")+
+        " \nText is: " + (text || "") 
+      );
     logAsk(text, "send");
   }, true);
 
@@ -913,7 +1151,38 @@ document.addEventListener("paste", (e) => {
     }
   }
 
+  window.addEventListener("message", (e) => {
+    if (e.source !== window || !e.data || e.data.source !== "ai-chat-logger") return;
+    const id = e.data.id || getConversationId() || knownId;
+    if (e.data.id && !getConversationId()) bindHeld(e.data.id, e.data.title);
+    else if (e.data.id) knownId = e.data.id;
+    if (e.data.title) syncTitle(id, e.data.title);
+  });
+
+  window.addEventListener("pagehide", () => {
+    const id = getConversationId();
+    if (id) {
+      bindHeld(id);
+      return;
+    }
+    for (const ask of heldAsks.splice(0, heldAsks.length)) settlePending(ask);
+  });
+
   setInterval(() => {
+    const id = getConversationId();
+    if (id && heldAsks.length) bindHeld(id);
+    else if (id && id !== knownId) {
+      knownId = id;
+      syncTitle(id, document.title);
+      // Only still-held asks (under 20s) may move. Timed-out pending stay pending.
+    }
+    heldAsks.slice().forEach((ask) => {
+      if (Date.now() - ask.at > BIND_MS && !getConversationId()) {
+        const i = heldAsks.indexOf(ask);
+        if (i >= 0) heldAsks.splice(i, 1);
+        settlePending(ask);
+      }
+    });
     logSeenBubbles();
   }, 800);
 

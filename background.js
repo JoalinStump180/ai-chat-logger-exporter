@@ -614,7 +614,38 @@ async function updateRecycleText(payload) {
   return { ok: true, updated };
 }
 
+
+async function setLiked(payload) {
+  const recordKey = String(payload.recordKey || "");
+  const kind = String(payload.kind || "");
+  const liked = !!payload.liked;
+  if (!recordKey || (kind !== "ask" && kind !== "answer" && kind !== "onMsg")) return { ok: false, reason: "no-key" };
+  const storeName = kind === "answer" ? ANSWER_STORE : ASK_STORE;
+  const db = await openDb();
+  const updated = await new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    const store = tx.objectStore(storeName);
+    const getReq = store.get(recordKey);
+    let found = false;
+    getReq.onsuccess = () => {
+      const row = getReq.result;
+      if (!row) return;
+      found = true;
+      row.liked = liked;
+      store.put(row);
+    };
+    tx.oncomplete = () => resolve(found);
+    tx.onerror = () => reject(tx.error);
+  });
+  return { ok: !!updated, updated, liked };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === "set-liked") {
+    setLiked(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    return true;
+  }
+
   if (msg && msg.type === "log-ask") {
     upsertConversation(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
     return true;

@@ -357,8 +357,33 @@ function ansHay(a) {
 function viewAsks(convKey) {
   return (filter === "recycle" ? recycleAsks : asksByConv).get(convKey) || [];
 }
+function nodeLiked(n) { return !!(n && n.liked); }
+function findByNid(nid) {
+  const id = String(nid || "");
+  const kind = id.startsWith("ans-") ? "answer" : id.startsWith("onMsg-") ? "onMsg" : "ask";
+  const rest = id.replace(/^(?:onMsg|ask|ans)-/, "");
+  const maps = [asksByConv, recycleAsks];
+  for (const map of maps) {
+    for (const list of map.values()) {
+      for (const ask of list) {
+        const askNid = (isOnMsg(ask) ? "onMsg-" : "ask-") + (ask.recordKey || ask.localIndex);
+        if (kind !== "answer" && (ask.recordKey === rest || askNid === id)) return { node: ask, kind: isOnMsg(ask) ? "onMsg" : "ask" };
+        for (const ans of (ask.answers || [])) {
+          const ansNid = "ans-" + (ans.recordKey || ans.localIndex);
+          if (kind === "answer" && (ans.recordKey === rest || ansNid === id)) return { node: ans, kind: "answer", parent: ask };
+        }
+      }
+    }
+  }
+  return null;
+}
+function chatHasLiked(r) {
+  return viewAsks(r.convKey).some((c) => nodeLiked(c) || (c.answers || []).some(nodeLiked));
+}
 function matchRow(r, q) {
-  if (filter !== "all" && filter !== "recycle" && r.platform !== filter) return false;
+  if (filter === "favorites") {
+    if (!chatHasLiked(r)) return false;
+  } else if (filter !== "all" && filter !== "recycle" && r.platform !== filter) return false;
   if (!chatInTime(r)) return false;
   const parsed = parseSearch(q);
   if (parsed.urlIds && parsed.urlIds.size && !parsed.urlIds.has(Number(r.id))) return false;
@@ -502,11 +527,15 @@ function pttNode(opts) {
   const kids = hasKids
     ? '<div class="ptt-kids"' + (open ? "" : " hidden") + ">" + opts.kidsHtml + "</div>"
     : "";
+  const liked = !!opts.liked;
   const menu = opts.recordKey
-    ? '<span class="ptt-more"><button type="button" class="ptt-dots" data-rk="' + esc(opts.recordKey) + '" data-kind="' + esc(opts.storeKind || "ask") + '" data-text="' + esc(opts.editText || "") + '">\u22ee</button>' +
-      '<span class="ptt-menu" hidden><button type="button" class="ptt-edit">Edit</button><button type="button" class="ptt-del">Delete</button></span></span>'
+    ? '<span class="ptt-more"><button type="button" class="ptt-dots" data-nid="' + esc(opts.nid || "") + '" data-rk="' + esc(opts.recordKey) + '" data-kind="' + esc(opts.storeKind || "ask") + '" data-liked="' + (liked ? "1" : "0") + '" data-text="' + esc(opts.editText || "") + '">\u22ee</button>' +
+      '<span class="ptt-menu" hidden><button type="button" class="ptt-edit">Edit</button>' +
+      (liked ? '<button type="button" class="ptt-unlike">Unlike</button>' : '<button type="button" class="ptt-like">Like</button>') +
+      '<button type="button" class="ptt-del">Delete</button></span></span>'
     : "";
-  const label = hitDotHtml(opts.nid) + '<span class="ptt-label-wrap"><span class="ptt-tag">' + esc(opts.tag) + '</span>' +
+  const star = liked ? '<span class="ptt-like-mark" title="liked">\u2605</span>' : "";
+  const label = hitDotHtml(opts.nid) + star + '<span class="ptt-label-wrap"><span class="ptt-tag">' + esc(opts.tag) + '</span>' +
     (opts.foldText !== undefined ? messageToggleHtml(opts.foldText, opts.nid, false) : '') + '</span>';
   const bodyHtml = opts.foldText !== undefined
     ? esc(opts.bodyPrefix || '') + messageContentHtml(opts.foldText, opts.tokens, opts.nid, false)
@@ -526,6 +555,7 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
   const seenAns = (c.answers || []).some((a) => a.source === "seen");
   const kidsHtml = (kind !== "onMsg" && (includeImpAns || seenAns) && (c.answers || []).some((a) => inTime(a.ts)))
     ? (c.answers || []).filter((a) => inTime(a.ts) && (includeImpAns || a.source === "seen")).map(function (a) {
+        if (filter === "favorites" && !nodeLiked(a)) return "";
         return pttNode({
           nid: "ans-" + (a.recordKey || a.localIndex),
           ck: convKey,
@@ -536,6 +566,7 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
           tokens: tokens,
           kidsHtml: "",
           open: false,
+          liked: nodeLiked(a),
           recordKey: a.recordKey || "",
           storeKind: "answer",
           editText: a.text || ""
@@ -555,14 +586,16 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
     ak: c.recordKey,
     recordKey: c.recordKey || "",
     storeKind: kind === "onMsg" ? "onMsg" : "ask",
-    editText: c.text || ""
+    editText: c.text || "",
+    liked: nodeLiked(c)
   });
 }
 
 function askBlock(r, list, tokens) {
   const parts = [];
-  if (includeComments) {
-    const live = liveAsks(list).filter((c) => inTime(c.ts));
+  const showAsk = (c) => filter !== "favorites" || nodeLiked(c) || (c.answers || []).some(nodeLiked);
+  if (includeComments || filter === "favorites") {
+    const live = liveAsks(list).filter((c) => inTime(c.ts) && showAsk(c));
     if (live.length) {
       parts.push('<div class="ptt-tree">' + live.map(function (c) {
         return pttAskNode(c, tokens, false, "onMsg", r.convKey);
@@ -570,7 +603,7 @@ function askBlock(r, list, tokens) {
     }
   }
   if (includeImpAsks || includeImpAns || list.some((c) => c.source === "seen")) {
-    const imp = list.filter((c) => (c.source === "seen" || (includeImpAsks && isImp(c)) || (includeImpAns && isImp(c))) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts))));
+    const imp = list.filter((c) => showAsk(c) && (c.source === "seen" || (includeImpAsks && isImp(c)) || (includeImpAns && isImp(c)) || (filter === "favorites" && (nodeLiked(c) || (c.answers || []).some(nodeLiked)))) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts))));
     if (imp.length) {
       const ansOpenAll = openAns.has(r.convKey) || batchAnsOpen;
       const nodes = imp.map(function (c) {
@@ -659,6 +692,7 @@ function collectItems(sessions, tokens) {
       if (!isLiveAsk && !includeImpAsks) return;
       if (isOnMsg(c) || !isImp(c) || (includeImpAsks && isImp(c))) {
         if (!inTime(c.ts)) return;
+        if (filter === "favorites" && !nodeLiked(c) && !(c.answers || []).some(nodeLiked)) return;
         if (tokens.length && !hayHasAll(askHay(c), tokens) && !hayHasAll(pageHay(r), tokens)) return;
         items.push({
           ts: c.ts || 0,
@@ -667,7 +701,8 @@ function collectItems(sessions, tokens) {
           kind: isOnMsg(c) ? "onMsg" : "ask",
           localIndex: c.localIndex,
           text: c.text || "",
-          recordKey: c.recordKey || ""
+          recordKey: c.recordKey || "",
+          liked: !!c.liked
         });
       }
     });
@@ -713,6 +748,7 @@ function datetimeRangeHtml(start, end, tokens) {
         ts: it.ts,
         text: it.text,
         recordKey: it.recordKey,
+        liked: !!it.liked,
         answers: []
       }, tokens, false, it.kind, g.convKey);
     }).join("");
@@ -1328,9 +1364,28 @@ function onTreeToggle(e) {
   }
 }
 
+function placeMenu(menu, dots) {
+  menu.hidden = false;
+  menu.style.position = "fixed";
+  menu.style.zIndex = "1000";
+  const r = dots.getBoundingClientRect();
+  const w = menu.offsetWidth || 88;
+  const h = menu.offsetHeight || 0;
+  const below = r.bottom + 2;
+  const top = (below + h > window.innerHeight && r.top - h - 2 > 0) ? (r.top - h - 2) : below;
+  let left = r.right - w;
+  if (left < 4) left = 4;
+  if (left + w > window.innerWidth - 4) left = window.innerWidth - w - 4;
+  menu.style.top = top + "px";
+  menu.style.left = left + "px";
+}
 function closeMenus() {
   document.querySelectorAll(".ptt-menu").forEach(function (m) { m.hidden = true; });
 }
+document.querySelectorAll(".listwrap, .hitwrap").forEach(function (box) {
+  box.addEventListener("scroll", closeMenus, true);
+});
+window.addEventListener("resize", closeMenus);
 // Delegate from the document so Read more / Show less works in both panes.
 document.addEventListener("click", function (e) {
   const dots = e.target.closest(".ptt-dots");
@@ -1339,7 +1394,7 @@ document.addEventListener("click", function (e) {
     const menu = dots.parentElement.querySelector(".ptt-menu");
     const open = menu.hidden;
     closeMenus();
-    menu.hidden = !open;
+    if (open) placeMenu(menu, dots);
     return;
   }
   const editBtn = e.target.closest(".ptt-edit");
@@ -1375,6 +1430,34 @@ document.addEventListener("click", function (e) {
         seek($("q").value);
       });
     };
+    return;
+  }
+  const likeBtn = e.target.closest(".ptt-like, .ptt-unlike");
+  if (likeBtn) {
+    const more = likeBtn.closest(".ptt-more");
+    const dotsBtn = more && more.querySelector(".ptt-dots");
+    closeMenus();
+    if (!dotsBtn) return;
+    const nodeEl = likeBtn.closest(".ptt-node");
+    const nid = dotsBtn.dataset.nid || (nodeEl && nodeEl.dataset.nid) || "";
+    const hit = findByNid(nid);
+    const rk = (hit && hit.node && hit.node.recordKey) || dotsBtn.dataset.rk || "";
+    const kind = (hit && hit.kind) || dotsBtn.dataset.kind || "ask";
+    const liked = likeBtn.classList.contains("ptt-like");
+    const ck = (nodeEl && nodeEl.dataset.ck) || nidToConvKey.get(nid) || "";
+    if (!rk) { $("status").textContent = "Like failed: no record for " + nid; return; }
+    if (hit && hit.node) hit.node.liked = liked;
+    if (ck) openChats.add(ck);
+    chrome.runtime.sendMessage({ type: "set-liked", recordKey: rk, kind: kind, liked: liked }, function (res) {
+      const err = chrome.runtime.lastError;
+      const again = findByNid(nid);
+      if (again && again.node) again.node.liked = liked;
+      if (ck) openChats.add(ck);
+      seek($("q").value);
+      $("status").textContent = err
+        ? ("Like not saved: " + err.message)
+        : ((liked ? "Liked " : "Unliked ") + nid + (res && res.updated === false ? " (not in DB)" : ""));
+    });
     return;
   }
   if (e.target.closest(".ptt-del")) {
