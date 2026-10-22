@@ -158,59 +158,122 @@ chrome.storage.onChanged.addListener((changes, area) => {
           ts: Date.now(),
           nonce: Date.now() + "-extra"
         }, () => void chrome.runtime.lastError);
-      }, true);
+      
+      
+      },  true      );
       
       
       //add click listener for 3rd party site of  mouse click there .
-    document.addEventListener("click", (e) => {
-  //console.log("[DEBUG] document click handler fired");
+    //document.addEventListener("mousedown",   async (e) => {   ---if i use "mouse-down"  herer it will intercept the click event , 
+    document.addEventListener("click",   async (e) => {
+  console.log("[DEBUG] document click handler fired");
+  //var isSend = getSendButton();
+  
+  
 
-  const path = e.composedPath ? e.composedPath() : [e.target];
+ // var sendbtn = getSendButton();
+  
+    //if (!sendbtn) if (bag.flag1)  alert('!sendbtn and goto eof');
+   //if (!sendbtn)  return;
+  
+      const path = e.composedPath ? e.composedPath() : [e.target];
+    //typeof e.composedPath === "function"
+    //  ? e.composedPath()
+    //  : [e.target];
 
-  const isSend = path.some((el) => {
-    if (!(el instanceof Element)) return false;
+  let isSend = false;
 
-    const btn = el.closest("button") || el;
-    if (!(btn instanceof HTMLElement)) return false;
+   isSend = path.some((el) => {
+  if (!(el instanceof Element)) return false;
 
-    const testid = (btn.getAttribute("data-testid") || "").toLowerCase();
-    const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
-    const text = (btn.textContent || "").trim().toLowerCase();
+  const btn = el.closest("button");
+  if (!(btn instanceof HTMLButtonElement)) return false;
 
-    return (
+  const testid = (btn.getAttribute("data-testid") || "").toLowerCase();
+  const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+  const text = (btn.textContent || "").trim().toLowerCase();
+
+
+
+
+    testid.includes("send") &&console.log('   testid.includes("send")    ');
+    aria.includes("send") &&console.log('    aria.includes("send")  ');
+    aria.includes("submit")&&console.log('  aria.includes("submit")    ');
+    testid.includes("submit") &&console.log('      testid.includes("submit")    ');
+    testid.includes("chat-submit") &&console.log('  testid.includes("chat-submit")   ');
+    testid.includes("groksend") &&console.log('     testid.includes("groksend")   ');
+    text === "submit"&&console.log('   text === "submit"  ');
+    text === "send" &&console.log('   text === "send"   ');
+    (btn.type === "submit" && !!btn.closest("form"))&&console.log('   (btn.type === "submit" && !!btn.closest("form"))   ' );
+
+
+
+
+  const matched =
       testid.includes("send") ||
+      testid.includes("submit") ||
       aria.includes("send") ||
       aria.includes("submit") ||
-      aria.includes("search") ||
-      testid.includes("submit") ||
-      testid.includes("chat-submit") ||
-      testid.includes("groksend") ||
-      text === "submit" ||
       text === "send" ||
-      (btn.type === "submit" && btn.closest("form"))
-    );
-  });
+      text === "submit" 
+    
 
- // console.log("[DEBUG] isSend =", isSend);
+  if (matched) {
+    console.log("[2] MATCHED BUTTON", { btn, testid, aria, text });
+  }
 
-  if (!isSend) return;
+  return matched;
+});
+ 
+     const bag = await chrome.storage.local.get(["flag1"]);
+ 
 
-  const text = mousedownText || lastComposerText;
+  if (!isSend) {
+    if (bag.flag1) alert ("[DEBUG] Not a Send-button click");
+    return;
+  }
 
-  chrome.storage.local.get(["flag1"], (bag) => {
-    //console.log("[DEBUG] stored flag1 =", bag.flag1);
-   // console.log("[DEBUG] storage error =", chrome.runtime.lastError?.message);
+  const liveComposer = findComposer();
+  const liveText = liveComposer
+    ? getComposerText(liveComposer)
+    : "";
 
-    if (bag.flag1) {
-      alert(
-        "mousedownText is: " + (mousedownText || "") +
-        "\nlastComposerText is: " + (lastComposerText || "")
-      );
-    }
-  });
+  const text = liveText || mousedownText || lastComposerText;
+  
+
+
+if (bag.flag1) {
+  alert(
+    "\nliveText is: " + (liveText || "") +
+    "\nmousedownText is: " + (mousedownText || "") +
+    "\nlastComposerText is: " + (lastComposerText || "") +
+    
+    "\ngetComposerText(findComposer()); is: " +      (getComposerText(findComposer()) || "")
+  );
+}
 
   //console.log("[DEBUG] calling logAsk; text =", text);
-  logAsk(text, "send");
+  //logAsk(text, "send");
+  
+          const u = new URL(location.href);
+        u.hash = "";
+        chrome.runtime.sendMessage({
+          type: "log-ask",
+          platform: hit.id,
+          conversationId: u.pathname + u.search,
+          url: u.origin + u.pathname + u.search,
+          title: document.title,
+          text: text+'     op click path',
+          logAsks: true,
+          ts: Date.now(),
+          nonce: Date.now() + "-extra"
+        }, () => void chrome.runtime.lastError);
+  
+  
+  
+  
+  
+  
 }, true);
       
       
