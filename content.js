@@ -163,7 +163,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       
       //add click listener for 3rd party site of  mouse click there .
     document.addEventListener("click", (e) => {
-  console.log("[DEBUG] document click handler fired");
+  //console.log("[DEBUG] document click handler fired");
 
   const path = e.composedPath ? e.composedPath() : [e.target];
 
@@ -191,15 +191,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
     );
   });
 
-  console.log("[DEBUG] isSend =", isSend);
+ // console.log("[DEBUG] isSend =", isSend);
 
   if (!isSend) return;
 
   const text = mousedownText || lastComposerText;
 
   chrome.storage.local.get(["flag1"], (bag) => {
-    console.log("[DEBUG] stored flag1 =", bag.flag1);
-    console.log("[DEBUG] storage error =", chrome.runtime.lastError?.message);
+    //console.log("[DEBUG] stored flag1 =", bag.flag1);
+   // console.log("[DEBUG] storage error =", chrome.runtime.lastError?.message);
 
     if (bag.flag1) {
       alert(
@@ -209,7 +209,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
   });
 
-  console.log("[DEBUG] calling logAsk; text =", text);
+  //console.log("[DEBUG] calling logAsk; text =", text);
   logAsk(text, "send");
 }, true);
       
@@ -755,12 +755,14 @@ document.addEventListener("focusin", (e) => {
   }
 });
 
-document.addEventListener("paste", (e) => {
+if (0)  document.addEventListener("paste", (e) => {
   const el = e.target;
   if (isEditable(el) && isVisible(el)) {
+   
+  if   (lastActiveComposer !== el) alert('in paste listener ,   lastActiveComposer !== el  ')    ;
     lastActiveComposer = el;
     requestAnimationFrame(() => {
-      //lastComposerText = getText(el);
+      lastComposerText = getText(el);
     });
   }
 });
