@@ -29,6 +29,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     const el = (lastActiveComposer && isVisible(lastActiveComposer))
       ? lastActiveComposer
       : findComposer();
+
     mousedownText = el ? getComposerText(el) : "";
     // intentionally no logAsk here
   }, true);
@@ -165,7 +166,7 @@ if (0)  document.addEventListener("paste", (e) => {
         if (whiteAncestorTerms.length && !whiteAncestorTerms.some((term) => ancestorTermMatches(el, term))) return false;
         return true;
       }
-    if (flags.flag1) alert("hit's val is " + (hit.text || ""));
+    if (flags.flag1) alert("this only appears for 3rd site: hit's val is " + (hit.text || ""));
  
  
  
@@ -182,7 +183,10 @@ if (0)  document.addEventListener("paste", (e) => {
         if (!el || !passesAncestorFilters(el)) return;
 
         const text = getText(el);
+         if (document.activeElement === findComposer())  if (text==="haha"||text==="") alert ('  ENTER:test for text is empty or haha     ');
        if (flags.flag1)  alert('enterkey path for 3rd site is ' + (text || ""));
+       
+       
         if (!text) return;
         const u = new URL(location.href);
         u.hash = "";
@@ -290,10 +294,14 @@ if (bag.flag2) {
     "\ngetText(findComposer()); is: " +      (getText(findComposer()) || "").split("\n")[0]
   );
 }
-
+ 
   //console.log("[DEBUG] calling logAsk; text =", text);
   //logAsk(text, "send");
-  
+                  //const text = getText(el);
+            if (text==="haha"||text==="") alert ('  send button CLICK: test for text is empty or haha     ');
+         
+         
+         
           const u = new URL(location.href);
         u.hash = "";
         chrome.runtime.sendMessage({
@@ -993,7 +1001,7 @@ if (bag.flag2) {
      
      
      
-     
+     const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
     if (!isSend)     if (bag.flag1) alert ("[DEBUG] Not a Send-button click ");
     if (!isSend) return;
 
