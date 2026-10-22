@@ -35,6 +35,45 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 
 
+document.addEventListener("focus", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+  console.log( 'in focus , (isEditable(el) && isVisible(el)) give true '  );
+    lastActiveComposer = el;
+     //lastComposerText = getText(el);  
+  }
+});
+
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+  console.log( 'in input , (isEditable(el) && isVisible(el)) give true '  );
+    lastActiveComposer = el;
+    //lastComposerText = getText(el);   // also update text
+  }
+});
+
+document.addEventListener("focusin", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+  console.log( 'in focusin , (isEditable(el) && isVisible(el)) give true '  );
+    lastActiveComposer = el;
+     //lastComposerText = getText(el);  
+  }
+});
+
+if (0)  document.addEventListener("paste", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+   
+  if   (lastActiveComposer !== el) alert('in paste listener ,   lastActiveComposer !== el  ')    ;
+    lastActiveComposer = el;
+    requestAnimationFrame(() => {
+      lastComposerText = getText(el);
+    });
+  }
+});
+  // ---why u do not do it like this   ?
 
   const host = location.hostname;
   const platform =
@@ -164,46 +203,91 @@ chrome.storage.onChanged.addListener((changes, area) => {
       
       
       //add click listener for 3rd party site of  mouse click there .
+    //document.addEventListener("mousedown",   async (e) => {   ---if i use "mouse-down"  herer it will intercept the click event , 
     document.addEventListener("click",   async (e) => {
-  //console.log("[DEBUG] document click handler fired");
+  console.log("[DEBUG] document click handler fired");
   //var isSend = getSendButton();
-  var isSend = getSendButton();
-   
- 
- 
- const bag = await chrome.storage.local.get(["flag1"]);
- 
-  if (!isSend) if (bag.flag1)  alert('can not find send button for 3rd site path');
-   if (!isSend)  return;
- 
-  
- 
- 
- 
-//const bag = await chrome.storage.local.get(["flag1"]);
-
-
-
-
-
-
-
-
-  
-  
-  
-  const text = mousedownText || lastComposerText||getComposerText(findComposer());;
   
   
 
+ // var sendbtn = getSendButton();
+  
+    //if (!sendbtn) if (bag.flag1)  alert('!sendbtn and goto eof');
+   //if (!sendbtn)  return;
+  
+      const path = e.composedPath ? e.composedPath() : [e.target];
+    //typeof e.composedPath === "function"
+    //  ? e.composedPath()
+    //  : [e.target];
 
-if (bag.flag1) {
+  let isSend = false;
+
+   isSend = path.some((el) => {
+  if (!(el instanceof Element)) return false;
+
+  const btn = el.closest("button");
+  if (!(btn instanceof HTMLButtonElement)) return false;
+
+  const testid = (btn.getAttribute("data-testid") || "").toLowerCase();
+  const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+  const text = (btn.textContent || "").trim().toLowerCase();
+
+
+
+
+    testid.includes("send") &&console.log('   testid.includes("send")    ');
+    aria.includes("send") &&console.log('    aria.includes("send")  ');
+    aria.includes("submit")&&console.log('  aria.includes("submit")    ');
+    testid.includes("submit") &&console.log('      testid.includes("submit")    ');
+    testid.includes("chat-submit") &&console.log('  testid.includes("chat-submit")   ');
+    testid.includes("groksend") &&console.log('     testid.includes("groksend")   ');
+    text === "submit"&&console.log('   text === "submit"  ');
+    text === "send" &&console.log('   text === "send"   ');
+    (btn.type === "submit" && !!btn.closest("form"))&&console.log('   (btn.type === "submit" && !!btn.closest("form"))   ' );
+
+
+
+
+  const matched =
+      testid.includes("send") ||
+      testid.includes("submit") ||
+      aria.includes("send") ||
+      aria.includes("submit") ||
+      text === "send" ||
+      text === "submit" 
+    
+
+  if (matched) {
+    console.log("[2] MATCHED BUTTON", { btn, testid, aria, text });
+  }
+
+  return matched;
+});
+ 
+    const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
+ 
+
+  if (!isSend)   if (bag.flag1) alert ("[DEBUG] Not a Send-button click in 3rd site");
+  if (!isSend)   return;
+  
+
+  const liveComposer = findComposer();
+  const liveText = liveComposer
+    ? getComposerText(liveComposer)
+    : "";
+
+  const text = liveText || mousedownText || lastComposerText;
+  
+
+
+if (bag.flag2) {
   alert(
-    "mousedownText is: " + (mousedownText || "") +
-    "\nlastComposerText is: " + (lastComposerText || "") +
-    "\nText is: " + (text || "") +
-    "\ngetComposerText(findComposer()); is: " +
-      (getComposerText(findComposer()) || "")
+    "\nliveText is: " + (liveText || "").split("\n")[0] +
+    "\nmousedownText is: " + (mousedownText || "").split("\n")[0] +
+    "\nlastComposerText is: " + (lastComposerText || "").split("\n")[0]+
+    
+    "\ngetComposerText(findComposer()); is: " +      (getComposerText(findComposer()) || "").split("\n")[0]+
+    "\ngetText(findComposer()); is: " +      (getText(findComposer()) || "").split("\n")[0]
   );
 }
 
@@ -251,7 +335,11 @@ if (bag.flag1) {
       
     });
     return;
-  }
+  }   //---if (!platform)
+
+
+
+
 
   const STAMP_CLASS = "ai-ts-stamp";
   let settings = { showStamps: true, logAsks: true, logSeenAsks: true, logSeenAnswers: true, showSeenDebug: true };
@@ -749,42 +837,6 @@ if (bag.flag1) {
   }
 
 
-document.addEventListener("focus", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-    lastActiveComposer = el;
-     //lastComposerText = getText(el);  
-  }
-});
-
-document.addEventListener("input", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-    lastActiveComposer = el;
-    //lastComposerText = getText(el);   // also update text
-  }
-});
-
-document.addEventListener("focusin", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-    lastActiveComposer = el;
-     //lastComposerText = getText(el);  
-  }
-});
-
-if (0)  document.addEventListener("paste", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-   
-  if   (lastActiveComposer !== el) alert('in paste listener ,   lastActiveComposer !== el  ')    ;
-    lastActiveComposer = el;
-    requestAnimationFrame(() => {
-      lastComposerText = getText(el);
-    });
-  }
-});
-  // ---why u do not do it like this   ?
 
 
 
@@ -934,14 +986,16 @@ if (0)  document.addEventListener("paste", (e) => {
         (btn.type === "submit" && btn.closest("form"))
       );
     });
+    if (!isSend)     if (bag.flag1) alert ("[DEBUG] Not a Send-button click ");
     if (!isSend) return;
 
     //const text =mousedownText || lastComposerText;
     const text = mousedownText || lastComposerText || getComposerText(findComposer());
-            if (flags.flag1)   alert(
-        "\nmousedownText is: " + (mousedownText || "") +
-        "\nlastComposerText is: " + (lastComposerText || "")+
-        " \nText is: " + (text || "") 
+            if (flags.flag2)   alert(
+        "\nmousedownText is: " + (mousedownText || "").split("\n")[0] +
+        "\nlastComposerText is: " + (lastComposerText || "").split("\n")[0]+
+        " \nText is: " + (text || "").split("\n")[0]+
+        " \n getComposerText(findComposer()) is: " + ( getComposerText(findComposer()) || "").split("\n")[0]
       );
     logAsk(text, "send");
   }, true);

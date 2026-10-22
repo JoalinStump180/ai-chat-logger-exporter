@@ -35,6 +35,45 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 
 
+document.addEventListener("focus", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+  console.log( 'in focus , (isEditable(el) && isVisible(el)) give true '  );
+    lastActiveComposer = el;
+     //lastComposerText = getText(el);  
+  }
+});
+
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+  console.log( 'in input , (isEditable(el) && isVisible(el)) give true '  );
+    lastActiveComposer = el;
+    //lastComposerText = getText(el);   // also update text
+  }
+});
+
+document.addEventListener("focusin", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+  console.log( 'in focusin , (isEditable(el) && isVisible(el)) give true '  );
+    lastActiveComposer = el;
+     //lastComposerText = getText(el);  
+  }
+});
+
+if (0)  document.addEventListener("paste", (e) => {
+  const el = e.target;
+  if (isEditable(el) && isVisible(el)) {
+   
+  if   (lastActiveComposer !== el) alert('in paste listener ,   lastActiveComposer !== el  ')    ;
+    lastActiveComposer = el;
+    requestAnimationFrame(() => {
+      lastComposerText = getText(el);
+    });
+  }
+});
+  // ---why u do not do it like this   ?
 
   const host = location.hostname;
   const platform =
@@ -225,13 +264,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   return matched;
 });
  
-     const bag = await chrome.storage.local.get(["flag1"]);
+    const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
  
 
-  if (!isSend) {
-    if (bag.flag1) alert ("[DEBUG] Not a Send-button click");
-    return;
-  }
+  if (!isSend)   if (bag.flag1) alert ("[DEBUG] Not a Send-button click in 3rd site");
+  if (!isSend)   return;
+  
 
   const liveComposer = findComposer();
   const liveText = liveComposer
@@ -242,13 +280,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   
 
 
-if (bag.flag1) {
+if (bag.flag2) {
   alert(
-    "\nliveText is: " + (liveText || "") +
-    "\nmousedownText is: " + (mousedownText || "") +
-    "\nlastComposerText is: " + (lastComposerText || "") +
+    "\nliveText is: " + (liveText || "").split("\n")[0] +
+    "\nmousedownText is: " + (mousedownText || "").split("\n")[0] +
+    "\nlastComposerText is: " + (lastComposerText || "").split("\n")[0]+
     
-    "\ngetComposerText(findComposer()); is: " +      (getComposerText(findComposer()) || "")
+    "\ngetComposerText(findComposer()); is: " +      (getComposerText(findComposer()) || "").split("\n")[0]+
+    "\ngetText(findComposer()); is: " +      (getText(findComposer()) || "").split("\n")[0]
   );
 }
 
@@ -296,7 +335,11 @@ if (bag.flag1) {
       
     });
     return;
-  }
+  }   //---if (!platform)
+
+
+
+
 
   const STAMP_CLASS = "ai-ts-stamp";
   let settings = { showStamps: true, logAsks: true, logSeenAsks: true, logSeenAnswers: true, showSeenDebug: true };
@@ -794,42 +837,6 @@ if (bag.flag1) {
   }
 
 
-document.addEventListener("focus", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-    lastActiveComposer = el;
-     //lastComposerText = getText(el);  
-  }
-});
-
-document.addEventListener("input", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-    lastActiveComposer = el;
-    //lastComposerText = getText(el);   // also update text
-  }
-});
-
-document.addEventListener("focusin", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-    lastActiveComposer = el;
-     //lastComposerText = getText(el);  
-  }
-});
-
-if (0)  document.addEventListener("paste", (e) => {
-  const el = e.target;
-  if (isEditable(el) && isVisible(el)) {
-   
-  if   (lastActiveComposer !== el) alert('in paste listener ,   lastActiveComposer !== el  ')    ;
-    lastActiveComposer = el;
-    requestAnimationFrame(() => {
-      lastComposerText = getText(el);
-    });
-  }
-});
-  // ---why u do not do it like this   ?
 
 
 
@@ -956,7 +963,7 @@ if (0)  document.addEventListener("paste", (e) => {
   // --------------------------------------------------
   // Send / Submit click → logAsk (prefers mousedownText)
   // --------------------------------------------------
-  document.addEventListener("click", (e) => {
+  document.addEventListener("click", async (e) => {
     const path = e.composedPath ? e.composedPath() : [e.target];
     const isSend = path.some((el) => {
       if (!(el instanceof Element)) return false;
@@ -979,16 +986,31 @@ if (0)  document.addEventListener("paste", (e) => {
         (btn.type === "submit" && btn.closest("form"))
       );
     });
+    
+     //  const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
+     //caution: keep in mind , we can in this listener write :  if we do not use 'await' syntax , we can use either"async (e) or (e)"  ; but if we use "const bag = await chrome.storage.local.get(" in side this listener, 
+     //   then in case in the text input bar there is non empty user input ,  the below clause "getComposerText(findComposer()"  will return just an empty string, only the mousedownText will not be empty ---or u solve that by first save that result in a buffer ,and then use "const bag = await chrome.storage.local.get(" in side this listener, and then 'alert (buffer)'
+     
+     
+     
+     
+    if (!isSend)     if (bag.flag1) alert ("[DEBUG] Not a Send-button click ");
     if (!isSend) return;
 
     //const text =mousedownText || lastComposerText;
     const text = mousedownText || lastComposerText || getComposerText(findComposer());
-            if (flags.flag1)   alert(
-        "\nmousedownText is: " + (mousedownText || "") +
-        "\nlastComposerText is: " + (lastComposerText || "")+
-        " \nText is: " + (text || "") 
+            if (flags.flag2)   alert(
+        "\nmousedownText is: " + (mousedownText || "").split("\n")[0] +
+        "\nlastComposerText is: " + (lastComposerText || "").split("\n")[0]+
+        " \nText is: " + (text || "").split("\n")[0]+
+        " \n getComposerText(findComposer()) is: " + ( getComposerText(findComposer()) || "").split("\n")[0]
       );
     logAsk(text, "send");
+    
+    
+    
+    
+    
   }, true);
 
   // --------------------------------------------------
