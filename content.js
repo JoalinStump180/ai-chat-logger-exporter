@@ -226,14 +226,16 @@ function ancestorTermMatches(el, rawTerm) {
           console.log("bldiv", whiteAncestorTerms, "chain", chain(el));
           
                 const text = getText(el);
-         if (flags.flag1)  if (document.activeElement !== lastActiveComposer) alert ('for curr pressed key document.activeElement  !== lastActiveComposer' );
           if (document.activeElement === lastActiveComposer)    if (text==="haha"||text==="") alert ('  3RD ENTER:test for text is empty or haha     ');
+          
+         if (flags.flag1)  if (document.activeElement !== lastActiveComposer) alert ('for curr pressed key document.activeElement  !== lastActiveComposer' );
+        // if (document.activeElement !== lastActiveComposer) return;
         if (flags.flag1)  alert('enterkey path for 3rd site is ' + (text || ""));
         
         
-        if (!el ) alert ('el fail , text:  '+getText(el) );
-        if ( !passesAncestorFilters(el)) alert ('passesAncestorFilters fail , text:  '+getText(el) );
+       if (flags.flag2)   if (!el ) alert ('el fail , text:  '+getText(el) );
         if (!el ) return;
+       if (flags.flag2)   if ( !passesAncestorFilters(el)) alert ('passesAncestorFilters fail (comment out this or do not check flag2 checkbox, to skip this )   , text:  '+getText(el) );
         if (!passesAncestorFilters(el)) return;
 
   
@@ -1014,8 +1016,8 @@ if (bag.flag2) {
     const el = lastActiveComposer || findComposer();
     if (!el) return;
     const target = e.target;
-    if (!(target instanceof Node)) return;
-    if (target !== el && !el.contains(target)) return;
+//    if (!(target instanceof Node)) return;
+   // if (target !== el && !el.contains(target)) return;
 
     const text =   getComposerText(el);
     logAsk(text, "enter");

@@ -2002,6 +2002,80 @@ chrome.storage.local.get("sideRoutes", function (bag) {
   sideRoutes = Array.isArray(bag.sideRoutes) ? bag.sideRoutes : [];
   paintSideRoutes();
 });
+
+// Export/import only user-created sidebar items (sideRoutes). Built-in filters
+// such as All chats, ChatGPT, Gemini, Grok, favorites, and recycle are defined
+// in explorer.html and are intentionally not part of this backup.
+$("exportSideBtn").addEventListener("click", function () {
+  const payload = {
+    format: "ai-chat-logger-side-pane",
+    version: 1,
+    sideRoutes: sideRoutes.map(function (item) {
+      return { id: item.id, name: item.name, text: item.text || "" };
+    })
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "ai-chat-logger-side-pane.json";
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+});
+
+$("importSideBtn").addEventListener("click", function () {
+  $("sideFileInput").click();
+});
+
+$("sideFileInput").addEventListener("change", async function (e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const imported = Array.isArray(data) ? data : data && data.sideRoutes;
+    if (!Array.isArray(imported)) {
+      throw new Error("This JSON does not contain a sideRoutes array.");
+    }
+
+    const seenIds = new Set();
+    const clean = [];
+    imported.forEach(function (item, index) {
+      if (!item || typeof item !== "object" || typeof item.name !== "string" || !item.name.trim()) return;
+      let id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : "";
+      if (!id || seenIds.has(id)) id = "route-import-" + Date.now() + "-" + index;
+      seenIds.add(id);
+      clean.push({ id: id, name: item.name.trim(), text: typeof item.text === "string" ? item.text : "" });
+    });
+
+    if (clean.length !== imported.length) {
+      const ok = confirm("The file contains " + imported.length + " entries, but only " + clean.length + " valid sidebar items. Import the valid items anyway?");
+      if (!ok) return;
+    } else if (!confirm("Replace the current " + sideRoutes.length + " custom sidebar item(s) with " + clean.length + " item(s) from this file? Built-in filters and conversation data will not be changed.")) {
+      return;
+    }
+
+    await new Promise(function (resolve, reject) {
+      chrome.storage.local.set({ sideRoutes: clean }, function () {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+    sideRoutes = clean;
+    if (filter !== "all" && !["chatgpt", "gemini", "grok", "favorites", "recycle"].includes(filter) && !sideRoutes.some(function (item) { return item.id === filter; })) {
+      filter = "all";
+      document.querySelectorAll(".side [data-filter]").forEach(function (el) {
+        el.classList.toggle("on", el.dataset.filter === "all");
+      });
+    }
+    paintSideRoutes();
+    seek($("q").value);
+    alert("Imported " + clean.length + " custom sidebar item(s).");
+  } catch (err) {
+    alert("Side Pane import failed: " + (err && err.message ? err.message : String(err)));
+  } finally {
+    e.target.value = "";
+  }
+});
 document.querySelector(".side").addEventListener("contextmenu", function (e) {
   e.preventDefault();
   sideTarget = e.target.closest("[data-filter]");
