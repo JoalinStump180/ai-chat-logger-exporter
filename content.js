@@ -125,8 +125,50 @@ if (0)  document.addEventListener("paste", (e) => {
         whiteAncestorTerms = parseAncestorFilterTerms("wldiv");
         blackAncestorTerms = parseAncestorFilterTerms("bldiv");
       });
+      
+      
+function nextAncestor(node) {
+  if (node.parentElement) return node.parentElement;
+  const root = node.getRootNode && node.getRootNode();
+  if (root && root.host) return root.host;   // leave the shadow tree
+  return null;
+}
+function chain(el) {
+  const out = [];
+  for (let n = el; n && n !== document.documentElement; n = nextAncestor(n)) {
+    if (n instanceof Element) out.push(n.localName + (n.id ? "#" + n.id : ""));
+  }
+  return out.join(" > ");
+}
 
-      function ancestorTermMatches(el, rawTerm) {
+
+
+
+function ancestorTermMatches(el, rawTerm) {
+  const term = String(rawTerm || "").trim().toLowerCase();
+  if (!term) return false;
+  let mode = "tag";
+  let needle = term;
+  if (/^div\.id:/i.test(term)) { mode = "id"; needle = term.slice(7); }
+  else if (/^div\./i.test(term)) { mode = "class"; needle = term.slice(4); }
+  else if (/^div#/i.test(term)) { mode = "id"; needle = term.slice(4); }
+  if (!needle) return false;
+
+  for (let node = el; node && node !== document.documentElement; node = nextAncestor(node)) {
+    if (!(node instanceof Element)) continue;
+    const tag = String(node.localName || node.tagName || "").toLowerCase();
+    if (mode === "class") {
+      const classes = typeof node.className === "string" ? node.className : (node.getAttribute("class") || "");
+      if (tag === "div" && classes.toLowerCase().includes(needle)) return true;
+    } else if (mode === "id") {
+      if (tag === "div" && String(node.id || "").toLowerCase().includes(needle)) return true;
+    } else if (tag.includes(needle)) {
+      return true;
+    }
+  }
+  return false;
+}
+      function ancestorTermMatches2(el, rawTerm) {
         const term = String(rawTerm || "").trim().toLowerCase();
         if (!term) return false;
         let mode = "tag";
@@ -163,7 +205,7 @@ if (0)  document.addEventListener("paste", (e) => {
       function passesAncestorFilters(el) {
         if (!el) return false;
         if (blackAncestorTerms.some((term) => ancestorTermMatches(el, term))) return false;
-        if (whiteAncestorTerms.length && !whiteAncestorTerms.some((term) => ancestorTermMatches(el, term))) return false;
+       // if (whiteAncestorTerms.length && !whiteAncestorTerms.some((term) => ancestorTermMatches(el, term))) return false;
         return true;
       }
     if (flags.flag1) alert("this only appears for 3rd site: hit's val is " + (hit.text || ""));
@@ -173,18 +215,29 @@ if (0)  document.addEventListener("paste", (e) => {
  
 
       
-      document.addEventListener("keydown", (e) => {
+      document.addEventListener("keydown",   (e) => {
         if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
         if (!hit) return;
         const target = e.target;
         const el = target instanceof HTMLElement && isEditable(target) && isVisible(target)
           ? target
           : findComposer();
-        if (!el || !passesAncestorFilters(el)) return;
+          
+          console.log("bldiv", whiteAncestorTerms, "chain", chain(el));
+          
+                const text = getText(el);
+         if (flags.flag1)  if (document.activeElement !== lastActiveComposer) alert ('for curr pressed key document.activeElement  !== lastActiveComposer' );
+          if (document.activeElement === lastActiveComposer)    if (text==="haha"||text==="") alert ('  3RD ENTER:test for text is empty or haha     ');
+        if (flags.flag1)  alert('enterkey path for 3rd site is ' + (text || ""));
+        
+        
+        if (!el ) alert ('el fail , text:  '+getText(el) );
+        if ( !passesAncestorFilters(el)) alert ('passesAncestorFilters fail , text:  '+getText(el) );
+        if (!el ) return;
+        if (!passesAncestorFilters(el)) return;
 
-        const text = getText(el);
-         if (document.activeElement === findComposer())  if (text==="haha"||text==="") alert ('  ENTER:test for text is empty or haha     ');
-       if (flags.flag1)  alert('enterkey path for 3rd site is ' + (text || ""));
+  
+       
        
        
         if (!text) return;
@@ -298,7 +351,7 @@ if (bag.flag2) {
   //console.log("[DEBUG] calling logAsk; text =", text);
   //logAsk(text, "send");
                   //const text = getText(el);
-            if (text==="haha"||text==="") alert ('  send button CLICK: test for text is empty or haha     ');
+            if (text==="haha"||text==="") alert ('  3RD send button CLICK: test for text is empty or haha     ');
          
          
          
