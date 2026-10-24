@@ -144,7 +144,7 @@ function chain(el) {
 
 
 
-function ancestorTermMatches(el, rawTerm) {
+function ancestorTermMatches_new(el, rawTerm) {
   const term = String(rawTerm || "").trim().toLowerCase();
   if (!term) return false;
   let mode = "tag";
@@ -168,7 +168,7 @@ function ancestorTermMatches(el, rawTerm) {
   }
   return false;
 }
-      function ancestorTermMatches2(el, rawTerm) {
+      function ancestorTermMatches(el, rawTerm) {
         const term = String(rawTerm || "").trim().toLowerCase();
         if (!term) return false;
         let mode = "tag";

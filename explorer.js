@@ -2148,23 +2148,20 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   
   if (middleMode === "item") {
     if (isScrollFetching) return;
+      
 
     const scrollPercentage = (el.scrollTop + el.clientHeight) / el.scrollHeight;
     
     // Trigger when user scrolls past 95%
-    if (scrollPercentage >= 0.95) {
-      if (dtEnd < datetimeItems.length) {
+    if (scrollPercentage >= 0.99) {
         isScrollFetching = true;
         enforceSlidingWindow("down");
+        el.scrollTop -=200;
+ 
         
-        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
-        // This drops the percentage below 95%, so it won't auto-trigger again 
-        // until the user actively scrolls down further.
-        setTimeout(() => {
-          el.scrollTop = el.scrollHeight * 0.85;
-          isScrollFetching = false;
-        }, 50);
-      }
+        
+    
+         isScrollFetching =false;
     } 
     // Trigger when user scrolls near the top
     else if (el.scrollTop <= 80) {
@@ -2234,7 +2231,7 @@ function enforceSlidingWindow(direction) {
         tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
 
         if (wrap) {
-          wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+          //wrap.scrollTop += wrap.scrollHeight - beforeHeight;
         }
       } else {
          //refreshDateTimeHead();
