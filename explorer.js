@@ -92,9 +92,15 @@ async function restoreUiState() {
   try {
     const saved = await readAllUiState();
     expandedMessageNids.clear();
+    messageFoldOverrides.clear();
     for (const entry of saved) {
-      if (typeof entry.key === "string" && entry.key.indexOf("expanded:") === 0 && entry.value === true) {
-        expandedMessageNids.add(entry.key.slice("expanded:".length));
+      // An expanded:<nid> record exists only after an explicit user toggle.
+      // Restore BOTH true and false: false is a meaningful explicit choice.
+      if (typeof entry.key === "string" && entry.key.indexOf("expanded:") === 0 && typeof entry.value === "boolean") {
+        const nid = entry.key.slice("expanded:".length);
+        messageFoldOverrides.set(nid, entry.value);
+        if (entry.value) expandedMessageNids.add(nid);
+        else expandedMessageNids.delete(nid);
       }
       if (entry.key === "rawSearch" && $("rawSearch")) $("rawSearch").checked = entry.value === true;
     }
@@ -457,13 +463,10 @@ function foldedMessageText(text, expanded) {
 }
 function messageIsExpanded(nid, convKey, tokens) {
   const key = String(nid || "");
+  // Explicit per-message choices win in both search and non-search modes.
   if (messageFoldOverrides.has(key)) return messageFoldOverrides.get(key);
-
-  // Search-mode Hit/All controls visible lines, not whether individual
-  // messages are expanded. Keep every message expanded by default so Hit
-  // can filter the message down to its matching lines.
-  if (tokens && tokens.length && convKey) return true;
-  return expandedMessageNids.has(key);
+  // Untouched messages are collapsed by default everywhere, including search.
+  return false;
 }
 function hitLinesHtml(text, tokens) {
   const lines = messageLines(text);
@@ -483,12 +486,16 @@ function messageShownHtml(text, tokens, nid, isExpanded, convKey, titlePane) {
   const key = String(nid || "");
   const hitMode = !!(titlePane && tokens && tokens.length && convKey &&
     (chatUnfoldModes.get(String(convKey)) || "hit") === "hit");
-  if (hitMode) return searchHitNids.has(key) ? hitLinesHtml(text, tokens) : "";
+  // Hit mode decides WHICH message nodes are included in the Title pane,
+  // not WHICH lines are printed inside each included node. Keep all of the
+  // logical folded text when collapsed, and the complete source text when
+  // expanded; search matches remain highlighted without deleting other lines.
+  if (hitMode && !searchHitNids.has(key)) return "";
   return highlightText(foldedMessageText(text, isExpanded), tokens);
 }
 function messageContentHtml(text, tokens, nid, expanded, convKey, titlePane) {
   const isExpanded = messageIsExpanded(nid, convKey, tokens);
-  return '<span class="msg-content" data-fold-id="' + esc(nid) + '" data-text="' + esc(String(text == null ? "" : text)) + '" data-expanded="' + (isExpanded ? '1' : '0') + '">' + messageShownHtml(text, tokens, nid, isExpanded, convKey, titlePane) + '</span>';
+  return '<span class="msg-content" data-fold-id="' + esc(nid) + '" data-text="' + esc(String(text == null ? "" : text)) + '" data-foldable="' + (shouldFoldMessage(text) ? '1' : '0') + '" data-expanded="' + (isExpanded ? '1' : '0') + '">' + messageShownHtml(text, tokens, nid, isExpanded, convKey, titlePane) + '</span>';
 }
 function messageToggleHtml(text, nid, expanded, convKey, tokens) {
   if (!shouldFoldMessage(text)) return '';
@@ -1085,17 +1092,21 @@ function readFoldSetting(input) {
     const value = readFoldSetting(input);
     input.value = String(value);
     if (id === "foldM") foldM = value; else foldN = value;
+    document.documentElement.style.setProperty("--fold-visual-lines", String(Math.max(1, foldM + foldN + 1)));
     seek($("q").value);
   });
 });
+
+document.documentElement.style.setProperty("--fold-visual-lines", String(Math.max(1, foldM + foldN + 1)));
 
 function seek(q) {
   const unfoldQuery = String(q == null ? "" : q);
   const isNewQuery = lastUnfoldQuery !== unfoldQuery;
   if (lastUnfoldQuery !== null && isNewQuery) {
     // A genuinely new query starts with the default "Hit" policy per chat.
+    // Do not clear messageFoldOverrides: explicit per-message choices survive
+    // query changes just like they survive pane refreshes and DOM recreation.
     chatUnfoldModes.clear();
-    messageFoldOverrides.clear();
   }
   lastUnfoldQuery = unfoldQuery;
   forceOpenAsk.clear();
@@ -1578,10 +1589,8 @@ document.addEventListener("click", function (e) {
     if (!ck) return;
     const nextMode = (chatUnfoldModes.get(ck) || "hit") === "hit" ? "all" : "hit";
     chatUnfoldModes.set(ck, nextMode);
-    // Remove per-message overrides in this chat so the newly chosen policy applies.
-    for (const nid of Array.from(messageFoldOverrides.keys())) {
-      if (nidToConvKey.get(nid) === ck) messageFoldOverrides.delete(nid);
-    }
+    // The Hit/All policy controls which lines are shown; it must not erase
+    // the user's explicit expanded/collapsed choice for individual messages.
     seek($("q").value);
     return;
   }

@@ -70,3 +70,45 @@ A committed rename, including Grok's auto-rename, updates the same row.
 Shorter names replace longer ones. A generic tab title does not overwrite
 a real name. Title-only sync does not add an ask and does not move the
 row's ask time.
+
+
+
+
+
+
+
+
+
+
+
+To let ,  in datetime pane, the mouse scrolling is more 'stable' , change this in explorer.js : 
+
+    if (scrollPercentage >= 0.95) {
+      if (dtEnd < datetimeItems.length) {
+        isScrollFetching = true;
+        enforceSlidingWindow("down");
+        
+        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
+        // This drops the percentage below 95%, so it won't auto-trigger again 
+        // until the user actively scrolls down further.
+        setTimeout(() => {
+          el.scrollTop = el.scrollHeight * 0.85;
+          isScrollFetching = false;
+        }, 50);
+
+
+
+into this:  
+
+    if (scrollPercentage >= 0.99) {
+      if (dtEnd < datetimeItems.length) {
+        isScrollFetching = true;
+        enforceSlidingWindow("down");
+        
+        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
+        // This drops the percentage below 95%, so it won't auto-trigger again 
+        // until the user actively scrolls down further.
+        setTimeout(() => {
+          el.scrollTop -= 200;
+          isScrollFetching = false;
+        }, 0);
