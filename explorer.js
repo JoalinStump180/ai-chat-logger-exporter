@@ -31,6 +31,7 @@ let middleMode = "ptt"; // sort: "ptt" = session/title order, "item" = date-time
 let dispStyle = "ptt"; // display: "ptt" (default multi-line tree) or "flat"
 let selectedNid = null; // persistent selected item identity (nid) across sort modes
 let hitNavFresh = 0; // 1 = next prev/next hit should find the neighbor of the selection
+let hitNavNid = null; // last item jumped to, so later clicks step one item not one line
 const openChats = new Set();
 const openAns = new Set();
 const forceOpenAsk = new Set();
@@ -1797,15 +1798,27 @@ function hitsByTime() {
 }
 function jumpToHit(h) {
   if (!h) return;
+  hitNavNid = h.nid;
   const i = hitList.findIndex(function (x) { return x.nid === h.nid; });
   if (i >= 0) jumpHit(i);
+}
+function stepUniqueHit(delta) {
+  const list = hitsByTime();
+  if (!list.length) return;
+  let i = list.findIndex(function (h) { return h.nid === hitNavNid; });
+  if (i < 0 && hitCursor >= 0 && hitList[hitCursor]) {
+    i = list.findIndex(function (h) { return h.nid === hitList[hitCursor].nid; });
+  }
+  if (i < 0) i = delta > 0 ? -1 : list.length;
+  const next = list[i + delta];
+  if (next) jumpToHit(next);
 }
 $("prevHit").onclick = function () {
   if (hitNavFresh === 1) {
     hitNavFresh = 0;
     const ts = selectedNodeTs();
     const list = hitsByTime();
-    if (ts == null) { jumpHit(hitCursor < 0 ? 0 : hitCursor - 1); return; }
+    if (ts == null) { stepUniqueHit(-1); return; }
     let prev = null;
     for (let i = 0; i < list.length; i++) {
       if ((list[i].ts || 0) <= ts && list[i].nid !== selectedNid) prev = list[i];
@@ -1814,19 +1827,19 @@ $("prevHit").onclick = function () {
     jumpToHit(prev);
     return;
   }
-  jumpHit(hitCursor < 0 ? 0 : hitCursor - 1);
+  stepUniqueHit(-1);
 };
 $("nextHit").onclick = function () {
   if (hitNavFresh === 1) {
     hitNavFresh = 0;
     const ts = selectedNodeTs();
     const list = hitsByTime();
-    if (ts == null) { jumpHit(hitCursor < 0 ? 0 : hitCursor + 1); return; }
+    if (ts == null) { stepUniqueHit(1); return; }
     const next = list.find(function (h) { return (h.ts || 0) > ts; });
     jumpToHit(next);
     return;
   }
-  jumpHit(hitCursor < 0 ? 0 : hitCursor + 1);
+  stepUniqueHit(1);
 };
 $("prevItem").onclick = function () { jumpItem(-1); };
 $("nextItem").onclick = function () { jumpItem(1); };
