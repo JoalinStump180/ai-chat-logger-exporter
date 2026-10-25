@@ -35,8 +35,13 @@ const openAns = new Set();
 const forceOpenAsk = new Set();
 // Runtime-only UI state survives DOM removal/recreation by the datetime sliding window.
 const expandedMessageNids = new Set();
+// Explicit per-message choices override the current chat-wide search unfolding policy.
+const messageFoldOverrides = new Map();
+// Per-chat search unfolding policy: "hit" (default) or "all".
+const chatUnfoldModes = new Map();
 // Item identities that contain at least one hit in the current search session.
 const searchHitNids = new Set();
+let lastUnfoldQuery = null;
 
 // UI-only preferences live in a separate IndexedDB database to avoid changing
 // the schema used by the logger's message records.
@@ -450,14 +455,44 @@ function foldedMessageText(text, expanded) {
   const last = foldN > 0 ? lines.slice(lines.length - foldN) : [];
   return first.concat(["…"], last).join("\n");
 }
-function messageContentHtml(text, tokens, nid, expanded) {
-  // The Set is authoritative: a re-created node restores its previous state.
-  const isExpanded = expandedMessageNids.has(String(nid));
-  return '<span class="msg-content" data-fold-id="' + esc(nid) + '" data-text="' + esc(String(text == null ? "" : text)) + '" data-expanded="' + (isExpanded ? '1' : '0') + '">' + highlightText(foldedMessageText(text, isExpanded), tokens) + '</span>';
+function messageIsExpanded(nid, convKey, tokens) {
+  const key = String(nid || "");
+  if (messageFoldOverrides.has(key)) return messageFoldOverrides.get(key);
+
+  // Search-mode Hit/All controls visible lines, not whether individual
+  // messages are expanded. Keep every message expanded by default so Hit
+  // can filter the message down to its matching lines.
+  if (tokens && tokens.length && convKey) return true;
+  return expandedMessageNids.has(key);
 }
-function messageToggleHtml(text, nid, expanded) {
+function hitLinesHtml(text, tokens) {
+  const lines = messageLines(text);
+  const firstN = lineFilterValue("searchFirstN");
+  const lastN = lineFilterValue("searchLastN");
+  const allowed = new Set();
+  if (firstN === null && lastN === null) {
+    lines.forEach((_, i) => allowed.add(i));
+  } else {
+    if (firstN !== null) for (let i = 0; i < Math.min(firstN, lines.length); i++) allowed.add(i);
+    if (lastN !== null) for (let i = Math.max(0, lines.length - lastN); i < lines.length; i++) allowed.add(i);
+  }
+  return lines.filter((line, i) => allowed.has(i) && tokens.length && hayHasAny(line, tokens))
+    .map(line => highlightText(line, tokens)).join("\n");
+}
+function messageShownHtml(text, tokens, nid, isExpanded, convKey, titlePane) {
+  const key = String(nid || "");
+  const hitMode = !!(titlePane && tokens && tokens.length && convKey &&
+    (chatUnfoldModes.get(String(convKey)) || "hit") === "hit");
+  if (hitMode) return searchHitNids.has(key) ? hitLinesHtml(text, tokens) : "";
+  return highlightText(foldedMessageText(text, isExpanded), tokens);
+}
+function messageContentHtml(text, tokens, nid, expanded, convKey, titlePane) {
+  const isExpanded = messageIsExpanded(nid, convKey, tokens);
+  return '<span class="msg-content" data-fold-id="' + esc(nid) + '" data-text="' + esc(String(text == null ? "" : text)) + '" data-expanded="' + (isExpanded ? '1' : '0') + '">' + messageShownHtml(text, tokens, nid, isExpanded, convKey, titlePane) + '</span>';
+}
+function messageToggleHtml(text, nid, expanded, convKey, tokens) {
   if (!shouldFoldMessage(text)) return '';
-  const isExpanded = expandedMessageNids.has(String(nid));
+  const isExpanded = messageIsExpanded(nid, convKey, tokens);
   return '<a href="#" class="msg-toggle" data-fold-id="' + esc(nid) + '" aria-expanded="' + (isExpanded ? 'true' : 'false') + '">' + (isExpanded ? 'Show less' : 'Read more') + '</a>';
 }
 function hitDotHtml(nid) {
@@ -518,6 +553,7 @@ function togPair(open, extra) {
 function pttNode(opts) {
   const hasKids = !!opts.kidsHtml;
   const open = !!opts.open;
+  if (opts.ck && opts.nid) nidToConvKey.set(String(opts.nid), String(opts.ck));
   const extra = opts.ak ? ('data-ak="' + esc(opts.ak) + '"') : "";
   const ckAttr = opts.ck ? ('data-ck="' + esc(opts.ck) + '"') : "";
   const t = hasKids ? togPair(open, extra) : {
@@ -536,9 +572,9 @@ function pttNode(opts) {
     : "";
   const star = liked ? '<span class="ptt-like-mark" title="liked">\u2605</span>' : "";
   const label = hitDotHtml(opts.nid) + star + '<span class="ptt-label-wrap"><span class="ptt-tag">' + esc(opts.tag) + '</span>' +
-    (opts.foldText !== undefined ? messageToggleHtml(opts.foldText, opts.nid, false) : '') + '</span>';
+    (opts.foldText !== undefined ? messageToggleHtml(opts.foldText, opts.nid, false, opts.ck, opts.tokens) : '') + '</span>';
   const bodyHtml = opts.foldText !== undefined
-    ? esc(opts.bodyPrefix || '') + messageContentHtml(opts.foldText, opts.tokens, opts.nid, false)
+    ? esc(opts.bodyPrefix || '') + messageContentHtml(opts.foldText, opts.tokens, opts.nid, false, opts.ck, !!opts.titlePane)
     : highlightText(opts.body, opts.tokens);
   return '<div class="ptt-node" data-nid="' + esc(opts.nid) + '" ' + ckAttr + '><div class="ptt-row">' +
     t.left + label +
@@ -546,7 +582,7 @@ function pttNode(opts) {
     '<span class="ptt-txt">  ' + bodyHtml + "</span>" + menu + "</div>" + kids + "</div>";
 }
 
-function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
+function pttAskNode(c, tokens, kidsOpen, kind, convKey, titlePane = false) {
 
   const tag = kind === "onMsg" ? ("onMsg#" + c.localIndex) : ("ask#" + c.localIndex);
   const nid = kind + "-" + (c.recordKey || c.localIndex);
@@ -567,6 +603,7 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
           kidsHtml: "",
           open: false,
           liked: nodeLiked(a),
+          titlePane: titlePane,
           recordKey: a.recordKey || "",
           storeKind: "answer",
           editText: a.text || ""
@@ -587,7 +624,8 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey) {
     recordKey: c.recordKey || "",
     storeKind: kind === "onMsg" ? "onMsg" : "ask",
     editText: c.text || "",
-    liked: nodeLiked(c)
+    liked: nodeLiked(c),
+    titlePane: titlePane
   });
 }
 
@@ -595,10 +633,12 @@ function askBlock(r, list, tokens) {
   const parts = [];
   const showAsk = (c) => filter !== "favorites" || nodeLiked(c) || (c.answers || []).some(nodeLiked);
   if (includeComments || filter === "favorites") {
-    const live = liveAsks(list).filter((c) => inTime(c.ts) && showAsk(c));
+    const hitMode = tokens.length && (chatUnfoldModes.get(String(r.convKey)) || "hit") === "hit";
+    const live = liveAsks(list).filter((c) => inTime(c.ts) && showAsk(c) &&
+      (!hitMode || searchHitNids.has("onMsg-" + (c.recordKey || c.localIndex))));
     if (live.length) {
       parts.push('<div class="ptt-tree">' + live.map(function (c) {
-        return pttAskNode(c, tokens, false, "onMsg", r.convKey);
+        return pttAskNode(c, tokens, false, "onMsg", r.convKey, true);
       }).join("") + "</div>");
     }
   }
@@ -606,11 +646,14 @@ function askBlock(r, list, tokens) {
     const imp = list.filter((c) => showAsk(c) && (c.source === "seen" || (includeImpAsks && isImp(c)) || (includeImpAns && isImp(c)) || (filter === "favorites" && (nodeLiked(c) || (c.answers || []).some(nodeLiked)))) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts))));
     if (imp.length) {
       const ansOpenAll = openAns.has(r.convKey) || batchAnsOpen;
+      const hitMode = tokens.length && (chatUnfoldModes.get(String(r.convKey)) || "hit") === "hit";
       const nodes = imp.map(function (c) {
-        const hitAns = tokens.length && (c.answers || []).some(function (a) { return hayHasAny(ansHay(a), tokens); });
+        const hitAns = tokens.length && (c.answers || []).some(function (a) { return searchHitNids.has("ans-" + (a.recordKey || a.localIndex)); });
+        const hitAsk = searchHitNids.has("ask-" + (c.recordKey || c.localIndex));
         const openKids = ansOpenAll || forceOpenAsk.has(c.recordKey) || hitAns;
+        if (hitMode && !hitAsk && !hitAns) return "";
         if (!includeImpAsks && includeImpAns && !hitAns && !openKids) return "";
-        return pttAskNode(c, tokens, openKids && includeImpAns, "ask", r.convKey);
+        return pttAskNode(c, tokens, openKids && includeImpAns, "ask", r.convKey, true);
       }).join("");
       parts.push('<div class="ptt-tree">' + nodes + "</div>");
     }
@@ -667,17 +710,21 @@ function rowHtml(r) {
   const tokens = parsed.tokens;
   const all = viewAsks(r.convKey);
   applySearchUnfold(r, tokens);
-  const auto = tokens.length && matchRow(r, q) && (includeComments || includeImpAsks || includeImpAns);
-  const show = openChats.has(r.convKey) || auto || batchAskOpen;
+  // Session folding is always manual/per-chat, whether search is active or not.
+  // Search hits affect message content, not whether the chat session is forced open.
+  const show = openChats.has(r.convKey);
   const ansOn = openAns.has(r.convKey) || batchAnsOpen;
   const fold = '<button class="fold" data-ck="' + esc(r.convKey) + '" type="button">' + (show ? "\u2212" : "+") + "</button>";
   const ansFold = '<button class="ansfold" data-ck="' + esc(r.convKey) + '" type="button" title="fold/unfold all imported answers">' + (ansOn ? "\u2212a" : "+a") + "</button>";
+  const unfoldMode = tokens.length
+    ? '<button class="chat-unfold-mode" data-ck="' + esc(r.convKey) + '" type="button" title="Toggle matching lines only vs all message lines in this chat">' + ((chatUnfoldModes.get(String(r.convKey)) || "hit") === "all" ? "All" : "Hit") + '</button>'
+    : "";
   const detail = show
     ? '<tr class="cmt-row" data-ck="' + esc(r.convKey) + '"><td colspan="6">' + askBlock(r, all, tokens) + "</td></tr>"
     : "";
   return '<tr data-id="' + r.id + '" data-ck="' + esc(r.convKey) + '" class="' + (r.id === selectedId ? "sel" : "") + '">' +
     "<td>" + esc(fmtTs(rowTs(r))) + "</td><td>" + esc(r.platform) + "</td>" +
-    '<td title="' + esc(r.title) + '">' + fold + ansFold + esc(r.title || "") + "</td>" +
+    '<td title="' + esc(r.title) + '">' + unfoldMode + fold + ansFold + esc(r.title || "") + "</td>" +
     '<td title="' + esc(r.url) + '">' + esc(r.conversationId || r.url || "") + "</td>" +
     "<td>" + (all.length || r.askCount || 0) + "</td><td>" + r.id + "</td></tr>" + detail;
 }
@@ -1043,11 +1090,20 @@ function readFoldSetting(input) {
 });
 
 function seek(q) {
+  const unfoldQuery = String(q == null ? "" : q);
+  const isNewQuery = lastUnfoldQuery !== unfoldQuery;
+  if (lastUnfoldQuery !== null && isNewQuery) {
+    // A genuinely new query starts with the default "Hit" policy per chat.
+    chatUnfoldModes.clear();
+    messageFoldOverrides.clear();
+  }
+  lastUnfoldQuery = unfoldQuery;
   forceOpenAsk.clear();
   const parsed = parseSearch(q);
   paintTokenBar(parsed.tokens);
   const source = filter === "recycle" ? recycleChats : rows;
   matched = source.filter(function (r) { return matchRow(r, q); });
+  if (isNewQuery && parsed.tokens.length) matched.forEach(function (r) { openChats.add(r.convKey); });
   hitList = [];
   if (parsed.tokens.length) matched.forEach(function (r) { collectHits(r, parsed.tokens); });
   searchHitNids.clear();
@@ -1481,7 +1537,8 @@ document.addEventListener("click", function (e) {
     if (!nid) return;
     const clickedContent = msgToggle.closest(".ptt-node, tr.item-row");
     const localContent = clickedContent && clickedContent.querySelector('.msg-content[data-fold-id="' + CSS.escape(nid) + '"]');
-    const expanded = localContent ? localContent.dataset.expanded !== "1" : !expandedMessageNids.has(nid);
+    const expanded = localContent ? localContent.dataset.expanded !== "1" : !messageIsExpanded(nid, nidToConvKey.get(nid), parseSearch($("q").value).tokens);
+    messageFoldOverrides.set(nid, expanded);
     if (expanded) expandedMessageNids.add(nid);
     else expandedMessageNids.delete(nid);
     saveUiState("expanded:" + nid, expanded);
@@ -1492,7 +1549,8 @@ document.addEventListener("click", function (e) {
       if (String(content.dataset.foldId || "") !== nid) return;
       const text = content.dataset.text || "";
       content.dataset.expanded = expanded ? "1" : "0";
-      content.innerHTML = highlightText(foldedMessageText(text, expanded), tokens);
+      const titlePane = !!content.closest("#titleView");
+      content.innerHTML = messageShownHtml(text, tokens, nid, expanded, nidToConvKey.get(nid), titlePane);
     });
     document.querySelectorAll(".msg-toggle").forEach(function (toggle) {
       if (String(toggle.dataset.foldId || "") !== nid) return;
@@ -1512,6 +1570,21 @@ document.addEventListener("click", function (e) {
     selectItemByNid(itemRow.dataset.nid, false);
     return;
   }
+  const chatModeBtn = e.target.closest(".chat-unfold-mode");
+  if (chatModeBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const ck = String(chatModeBtn.dataset.ck || "");
+    if (!ck) return;
+    const nextMode = (chatUnfoldModes.get(ck) || "hit") === "hit" ? "all" : "hit";
+    chatUnfoldModes.set(ck, nextMode);
+    // Remove per-message overrides in this chat so the newly chosen policy applies.
+    for (const nid of Array.from(messageFoldOverrides.keys())) {
+      if (nidToConvKey.get(nid) === ck) messageFoldOverrides.delete(nid);
+    }
+    seek($("q").value);
+    return;
+  }
   const ans = e.target.closest(".ansfold");
   if (ans) {
     const ck = ans.dataset.ck;
@@ -1522,10 +1595,35 @@ document.addEventListener("click", function (e) {
   }
   const fold = e.target.closest(".fold");
   if (fold) {
-    const ck = fold.dataset.ck;
+    const ck = String(fold.dataset.ck || "");
+    if (!ck) return;
     if (openChats.has(ck)) openChats.delete(ck);
     else openChats.add(ck);
-    seek($("q").value);
+
+    // With no search query, folding/unfolding affects only this session.
+    // Rebuild its own row/detail rows instead of clearing the entire Title pane;
+    // this avoids the browser's scroll-anchor jump when older rows are expanded.
+    if (String($("q").value || "").trim() === "") {
+      const oldRow = fold.closest('tr[data-id][data-ck]');
+      const session = matched.find(function (r) { return String(r.convKey) === ck; });
+      if (oldRow && session) {
+        let oldDetail = oldRow.nextElementSibling;
+        if (!oldDetail || !oldDetail.classList.contains("cmt-row") || String(oldDetail.dataset.ck || "") !== ck) {
+          oldDetail = null;
+        }
+        const template = document.createElement("template");
+        template.innerHTML = rowHtml(session);
+        const fragment = template.content;
+        oldRow.parentNode.insertBefore(fragment, oldRow);
+        oldRow.remove();
+        if (oldDetail) oldDetail.remove();
+      } else {
+        seek($("q").value);
+      }
+    } else {
+      // Keep the established search-mode behavior unchanged.
+      seek($("q").value);
+    }
     return;
   }
   const tr = e.target.closest("tr[data-id]");
@@ -2148,20 +2246,23 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
   
   if (middleMode === "item") {
     if (isScrollFetching) return;
-      
 
     const scrollPercentage = (el.scrollTop + el.clientHeight) / el.scrollHeight;
     
     // Trigger when user scrolls past 95%
     if (scrollPercentage >= 0.99) {
+      if (dtEnd < datetimeItems.length) {
         isScrollFetching = true;
         enforceSlidingWindow("down");
-        el.scrollTop -=200;
- 
         
-        
-    
-         isScrollFetching =false;
+        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
+        // This drops the percentage below 95%, so it won't auto-trigger again 
+        // until the user actively scrolls down further.
+        setTimeout(() => {
+          el.scrollTop -= 200;
+          isScrollFetching = false;
+        }, 0);
+      }
     } 
     // Trigger when user scrolls near the top
     else if (el.scrollTop <= 80) {
@@ -2231,7 +2332,7 @@ function enforceSlidingWindow(direction) {
         tb.innerHTML = datetimeRangeHtml(dtStart, dtEnd, tokens);
 
         if (wrap) {
-          //wrap.scrollTop += wrap.scrollHeight - beforeHeight;
+          wrap.scrollTop += wrap.scrollHeight - beforeHeight;
         }
       } else {
          //refreshDateTimeHead();
