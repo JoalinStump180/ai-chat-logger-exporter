@@ -1,0 +1,26 @@
+{
+  "format": "ai-chat-logger-side-pane",
+  "version": 1,
+  "sideRoutes": [
+    {
+      "id": "route-1791371215677",
+      "name": "test1",
+      "text": "onMsg:https://notebook.google.com/notebook"
+    },
+    {
+      "id": "route-1791374972739",
+      "name": "google",
+      "text": "onMsg:https://www.google.com\n"
+    },
+    {
+      "id": "route-1791375148654",
+      "name": "youtube",
+      "text": "onMsg:https://www.youtube.com\nbldiv:ytd-comments-header-renderer"
+    },
+    {
+      "id": "route-1792639154483",
+      "name": "https://chat.qwen.ai/",
+      "text": "onMsg:https://chat.qwen.ai\nonMsg:https://www.baidu.com"
+    }
+  ]
+}

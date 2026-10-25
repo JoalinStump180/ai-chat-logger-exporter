@@ -71,8 +71,10 @@ Shorter names replace longer ones. A generic tab title does not overwrite
 a real name. Title-only sync does not add an ask and does not move the
 row's ask time.
 
+Usage:
 
-
+use the  'import side pane' button to import    'ai-chat-logger-side-pane-example.json' ,
+and have a try , 
 
 
 
