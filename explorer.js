@@ -30,6 +30,7 @@ let liveSort = "ts-asc";
 let middleMode = "ptt"; // sort: "ptt" = session/title order, "item" = date-time item order
 let dispStyle = "ptt"; // display: "ptt" (default multi-line tree) or "flat"
 let selectedNid = null; // persistent selected item identity (nid) across sort modes
+let hitNavFresh = 0; // 1 = next prev/next hit should find the neighbor of the selection
 const openChats = new Set();
 const openAns = new Set();
 const forceOpenAsk = new Set();
@@ -131,6 +132,11 @@ function fmtTs(ts) {
 function isOnMsg(c) {
   return !!(c && (c.source === "onMsg" || String(c.recordKey || "").includes("|onMsg|")));
 }
+function isSeenRecord(c) {
+  return !!(c && (c.source === "seen" || c.source === "seen-dummy"));
+}
+function askNidPrefix(c) { return isSeenRecord(c) ? "sei" : (isOnMsg(c) ? "onMsg" : "ask"); }
+function answerNidPrefix(a) { return isSeenRecord(a) ? "seo" : "ans"; }
 function isImp(c) {
   if (!c) return false;
   if (isOnMsg(c)) return false;
@@ -328,6 +334,13 @@ function hayHasAny(hay, tokens) {
   const h = String(hay || "").toLowerCase();
   return tokens.some((t) => h.includes(tokLow(t)));
 }
+function searchIsAnd() {
+  const andBox = $("searchAnd");
+  return !!(andBox && andBox.checked);
+}
+function hayHasTokens(hay, tokens) {
+  return searchIsAnd() ? hayHasAll(hay, tokens) : hayHasAny(hay, tokens);
+}
 function lineFilterValue(id) {
   const el = $(id);
   if (!el || String(el.value).trim() === "") return null;
@@ -371,16 +384,16 @@ function viewAsks(convKey) {
 function nodeLiked(n) { return !!(n && n.liked); }
 function findByNid(nid) {
   const id = String(nid || "");
-  const kind = id.startsWith("ans-") ? "answer" : id.startsWith("onMsg-") ? "onMsg" : "ask";
-  const rest = id.replace(/^(?:onMsg|ask|ans)-/, "");
+  const kind = (id.startsWith("ans-") || id.startsWith("seo-")) ? "answer" : id.startsWith("onMsg-") ? "onMsg" : "ask";
+  const rest = id.replace(/^(?:onMsg|ask|ans|sei|seo)-/, "");
   const maps = [asksByConv, recycleAsks];
   for (const map of maps) {
     for (const list of map.values()) {
       for (const ask of list) {
-        const askNid = (isOnMsg(ask) ? "onMsg-" : "ask-") + (ask.recordKey || ask.localIndex);
+        const askNid = askNidPrefix(ask) + "-" + (ask.recordKey || ask.localIndex);
         if (kind !== "answer" && (ask.recordKey === rest || askNid === id)) return { node: ask, kind: isOnMsg(ask) ? "onMsg" : "ask" };
         for (const ans of (ask.answers || [])) {
-          const ansNid = "ans-" + (ans.recordKey || ans.localIndex);
+          const ansNid = answerNidPrefix(ans) + "-" + (ans.recordKey || ans.localIndex);
           if (kind === "answer" && (ans.recordKey === rest || ansNid === id)) return { node: ans, kind: "answer", parent: ask };
         }
       }
@@ -400,11 +413,11 @@ function matchRow(r, q) {
   if (parsed.urlIds && parsed.urlIds.size && !parsed.urlIds.has(Number(r.id))) return false;
   const tokens = parsed.tokens;
   if (!tokens.length) return true;
-  if (hayHasAll(pageHay(r), tokens)) return true;
+  if (hayHasTokens(pageHay(r), tokens)) return true;
   const list = viewAsks(r.convKey);
-  if (includeComments && list.some((c) => isLive(c) && hayHasAll(askHay(c), tokens))) return true;
-  if (includeImpAsks && list.some((c) => isImp(c) && hayHasAll(askHay(c), tokens))) return true;
-  if (includeImpAns && list.some((c) => (c.answers || []).some((a) => hayHasAll(ansHay(a), tokens)))) return true;
+  if (includeComments && list.some((c) => isLive(c) && hayHasTokens(askHay(c), tokens))) return true;
+  if (includeImpAsks && list.some((c) => isImp(c) && hayHasTokens(askHay(c), tokens))) return true;
+  if (includeImpAns && list.some((c) => (c.answers || []).some((a) => hayHasTokens(ansHay(a), tokens)))) return true;
   return false;
 }
 
@@ -592,7 +605,7 @@ function pttNode(opts) {
 function pttAskNode(c, tokens, kidsOpen, kind, convKey, titlePane = false) {
 
   const tag = kind === "onMsg" ? ("onMsg#" + c.localIndex) : ("ask#" + c.localIndex);
-  const nid = kind + "-" + (c.recordKey || c.localIndex);
+  const nid = (kind === "ask" ? askNidPrefix(c) : kind) + "-" + (c.recordKey || c.localIndex);
   if (convKey) nidToConvKey.set(nid, convKey);
 
   const seenAns = (c.answers || []).some((a) => a.source === "seen");
@@ -600,7 +613,7 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey, titlePane = false) {
     ? (c.answers || []).filter((a) => inTime(a.ts) && (includeImpAns || a.source === "seen")).map(function (a) {
         if (filter === "favorites" && !nodeLiked(a)) return "";
         return pttNode({
-          nid: "ans-" + (a.recordKey || a.localIndex),
+          nid: answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex),
           ck: convKey,
           tag: "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex),
           body: fmtTs(a.ts) + "  " + (a.text || ""),
@@ -655,8 +668,8 @@ function askBlock(r, list, tokens) {
       const ansOpenAll = openAns.has(r.convKey) || batchAnsOpen;
       const hitMode = tokens.length && (chatUnfoldModes.get(String(r.convKey)) || "hit") === "hit";
       const nodes = imp.map(function (c) {
-        const hitAns = tokens.length && (c.answers || []).some(function (a) { return searchHitNids.has("ans-" + (a.recordKey || a.localIndex)); });
-        const hitAsk = searchHitNids.has("ask-" + (c.recordKey || c.localIndex));
+        const hitAns = tokens.length && (c.answers || []).some(function (a) { return searchHitNids.has(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex)); });
+        const hitAsk = searchHitNids.has(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
         const openKids = ansOpenAll || forceOpenAsk.has(c.recordKey) || hitAns;
         if (hitMode && !hitAsk && !hitAns) return "";
         if (!includeImpAsks && includeImpAns && !hitAns && !openKids) return "";
@@ -703,9 +716,9 @@ function collectHits(r, tokens) {
   }
   if (includeImpAsks || includeImpAns) {
     list.filter((c) => isImp(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
-      if (includeImpAsks && inTime(c.ts)) add("ask-" + (c.recordKey || c.localIndex), "ask#" + c.localIndex, c.text || "", c.ts, true);
+      if (includeImpAsks && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), "ask#" + c.localIndex, c.text || "", c.ts, true);
       if (includeImpAns) (c.answers || []).filter((a) => inTime(a.ts)).forEach(function (a) {
-        add("ans-" + (a.recordKey || a.localIndex), "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
+        add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
       });
     });
   }
@@ -753,6 +766,7 @@ function collectItems(sessions, tokens) {
           convKey: r.convKey,
           session: r,
           kind: isOnMsg(c) ? "onMsg" : "ask",
+          source: c.source || "",
           localIndex: c.localIndex,
           text: c.text || "",
           recordKey: c.recordKey || "",
@@ -788,7 +802,7 @@ function bannerRowHtml(session) {
 }
 
 function datetimeItemNid(it) {
-  return it.kind + "-" + (it.recordKey || it.localIndex);
+  return askNidPrefix(it) + "-" + (it.recordKey || it.localIndex);
 }
 
 function datetimeRangeHtml(start, end, tokens) {
@@ -802,6 +816,7 @@ function datetimeRangeHtml(start, end, tokens) {
         ts: it.ts,
         text: it.text,
         recordKey: it.recordKey,
+        source: it.source || "",
         liked: !!it.liked,
         answers: []
       }, tokens, false, it.kind, g.convKey);
@@ -1119,7 +1134,7 @@ function seek(q) {
   if (parsed.tokens.length) matched.forEach(function (r) { collectHits(r, parsed.tokens); });
   searchHitNids.clear();
   hitList.forEach(function (h) {
-    if (/^(?:onMsg|ask|ans)-/.test(String(h.nid || ""))) searchHitNids.add(String(h.nid));
+    if (/^(?:onMsg|ask|ans|sei|seo)-/.test(String(h.nid || ""))) searchHitNids.add(String(h.nid));
   });
   hitCursor = hitList.length ? 0 : -1;
   setSeek(100, "Seek 100%  " + matched.length + " urls + " + hitList.length + " hits");
@@ -1171,7 +1186,7 @@ function jumpHit(i) {
       const pageItems = matched.slice(pageStart, pageStart + PAGE);
 
       // Render the target page BEFORE looking for the target node.
-      tb.innerHTML = pageItems.map(rowHtml).join("");
+      //tb.innerHTML = pageItems.map(rowHtml).join("");
       shown = pageStart + pageItems.length;
 
       $("empty").hidden = matched.length > 0;
@@ -1249,7 +1264,7 @@ function jumpHit3(i) {
       const pageStart = Math.floor(targetIndex / PAGE) * PAGE;
       const pageItems = matched.slice(pageStart, pageStart + PAGE);
 
-      tb.innerHTML = pageItems.map(rowHtml).join("");
+      //tb.innerHTML = pageItems.map(rowHtml).join("");
       shown = pageStart + pageItems.length;
 
       $("empty").hidden = matched.length > 0;
@@ -1573,11 +1588,13 @@ document.addEventListener("click", function (e) {
   if (e.target.closest(".ptt-tog")) { onTreeToggle(e); return; }
   const pttNode = e.target.closest(".ptt-node");
   if (pttNode && pttNode.dataset.nid) {
+    hitNavFresh = 1;
     selectItemByNid(pttNode.dataset.nid, false);
     return;
   }
   const itemRow = e.target.closest("tr.item-row");
   if (itemRow && itemRow.dataset.nid) {
+    hitNavFresh = 1;
     selectItemByNid(itemRow.dataset.nid, false);
     return;
   }
@@ -1758,8 +1775,59 @@ $("thDelDt").addEventListener("click", function () {
   if (th) th.textContent = "del datetime" + (delSort === "del-desc" ? " ↓" : " ↑");
   paintHits(parseSearch($("q").value).tokens);
 });
-$("prevHit").onclick = function () { jumpHit(hitCursor < 0 ? 0 : hitCursor - 1); };
-$("nextHit").onclick = function () { jumpHit(hitCursor < 0 ? 0 : hitCursor + 1); };
+function selectedNodeTs() {
+  if (!selectedNid) return null;
+  const hit = findByNid(selectedNid);
+  if (hit && hit.node && hit.node.ts) return hit.node.ts;
+  const it = datetimeItems.find(function (x) {
+    return (x.kind + "-" + (x.recordKey || x.localIndex)) === selectedNid;
+  });
+  return it ? it.ts : null;
+}
+function hitsByTime() {
+  const seen = new Set();
+  return hitList
+    .filter(function (h) {
+      if (seen.has(h.nid)) return false;
+      seen.add(h.nid);
+      return true;
+    })
+    .slice()
+    .sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+}
+function jumpToHit(h) {
+  if (!h) return;
+  const i = hitList.findIndex(function (x) { return x.nid === h.nid; });
+  if (i >= 0) jumpHit(i);
+}
+$("prevHit").onclick = function () {
+  if (hitNavFresh === 1) {
+    hitNavFresh = 0;
+    const ts = selectedNodeTs();
+    const list = hitsByTime();
+    if (ts == null) { jumpHit(hitCursor < 0 ? 0 : hitCursor - 1); return; }
+    let prev = null;
+    for (let i = 0; i < list.length; i++) {
+      if ((list[i].ts || 0) <= ts && list[i].nid !== selectedNid) prev = list[i];
+      else if ((list[i].ts || 0) > ts) break;
+    }
+    jumpToHit(prev);
+    return;
+  }
+  jumpHit(hitCursor < 0 ? 0 : hitCursor - 1);
+};
+$("nextHit").onclick = function () {
+  if (hitNavFresh === 1) {
+    hitNavFresh = 0;
+    const ts = selectedNodeTs();
+    const list = hitsByTime();
+    if (ts == null) { jumpHit(hitCursor < 0 ? 0 : hitCursor + 1); return; }
+    const next = list.find(function (h) { return (h.ts || 0) > ts; });
+    jumpToHit(next);
+    return;
+  }
+  jumpHit(hitCursor < 0 ? 0 : hitCursor + 1);
+};
 $("prevItem").onclick = function () { jumpItem(-1); };
 $("nextItem").onclick = function () { jumpItem(1); };
 $("foldAsksBtn").onclick = function () { batchAskOpen = false; matched.forEach((r) => openChats.delete(r.convKey)); seek($("q").value); };
@@ -1817,6 +1885,20 @@ function scheduleSearchFromControls() {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(function () { seek($("q").value); }, 120);
 }
+function bindSearchRelation() {
+  const andBox = $("searchAnd");
+  const orBox = $("searchOr");
+  if (!andBox || !orBox) return;
+  andBox.addEventListener("change", function () {
+    if (andBox.checked) orBox.checked = false;
+    seek($("q").value);
+  });
+  orBox.addEventListener("change", function () {
+    if (orBox.checked) andBox.checked = false;
+    seek($("q").value);
+  });
+}
+bindSearchRelation();
 $("rawSearch").addEventListener("change", function () {
   saveUiState("rawSearch", $("rawSearch").checked);
   seek($("q").value);
@@ -2268,7 +2350,7 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
         // This drops the percentage below 95%, so it won't auto-trigger again 
         // until the user actively scrolls down further.
         setTimeout(() => {
-          el.scrollTop -= 200;
+          el.scrollTop -=200;
           isScrollFetching = false;
         }, 0);
       }
@@ -2403,11 +2485,11 @@ function enforceSlidingWindow(direction) {
     if (!convKey || !nid) return null;
     for (const ask of viewAsks(convKey)) {
       const askKind = isOnMsg(ask) ? "onMsg" : "ask";
-      if (askKind + "-" + (ask.recordKey || ask.localIndex) === nid) {
+      if (askNidPrefix(ask) + "-" + (ask.recordKey || ask.localIndex) === nid) {
         return { kind: askKind, recordKey: ask.recordKey, text: ask.text, localIndex: ask.localIndex };
       }
       for (const answer of (ask.answers || [])) {
-        if ("ans-" + (answer.recordKey || answer.localIndex) === nid) {
+        if (answerNidPrefix(answer) + "-" + (answer.recordKey || answer.localIndex) === nid) {
           return { kind: "answer", recordKey: answer.recordKey, text: answer.text, localIndex: answer.localIndex };
         }
       }

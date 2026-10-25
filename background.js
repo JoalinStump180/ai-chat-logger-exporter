@@ -79,7 +79,7 @@ async function refreshCache() {
 }
 
 async function addAskOnce(row) {
-  const recordKey = row.onMsg ? onMsgRecordKey(row.platform, row.conversationId, row.nonce || row.ts) : askRecordKey(row.platform, row.conversationId, row.ts, row.text, row.responseId);
+  const recordKey = row.onMsg ? onMsgRecordKey(row.platform, row.conversationId, row.nonce || row.ts) : ((row.source === "seen" || row.source === "seen-dummy") ? seenAskRecordKey(row.platform, row.conversationId, row.ts, row.text, row.responseId) : askRecordKey(row.platform, row.conversationId, row.ts, row.text, row.responseId));
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(ASK_STORE, "readwrite");
@@ -124,7 +124,7 @@ async function addAskOnce(row) {
 }
 
 async function addAnswerOnce(row) {
-  const recordKey = answerRecordKey(row.platform, row.conversationId, row.responseId, row.ts, row.text);
+  const recordKey = row.source === "seen" ? seenAnswerRecordKey(row.platform, row.conversationId, row.responseId, row.ts, row.text) : answerRecordKey(row.platform, row.conversationId, row.responseId, row.ts, row.text);
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(ANSWER_STORE, "readwrite");

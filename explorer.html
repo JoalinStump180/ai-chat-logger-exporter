@@ -95,6 +95,8 @@
     </div>
     <span id="seek" style="min-width:160px;color:#555;">Seek 0%</span>
     <label title="Treat the entire search box as one literal, case-insensitive string; quotes and URLID are ordinary characters"><input id="rawSearch" type="checkbox" /> Raw literal</label>
+    <label title="All tokens must be present in the target text"><input id="searchAnd" type="checkbox" /> And</label>
+    <label title="Any one token is enough"><input id="searchOr" type="checkbox" checked /> Or</label>
     <label class="line-filter" title="Search message text only within these line ranges">Fst <input id="searchFirstN" type="number" min="0" step="1" placeholder="—" aria-label="Search first N lines" /></label>
     <label class="line-filter" title="Search message text only within these line ranges">Lst <input id="searchLastN" type="number" min="0" step="1" placeholder="—" aria-label="Search last N lines" /></label>
     <label class="line-filter" title="Only include message records with at least this many lines">MinL <input id="minLines" type="number" min="0" step="1" placeholder="—" aria-label="Minimum message line count" /></label>
