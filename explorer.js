@@ -1043,8 +1043,8 @@ function renderSlice(reset) {
   if (middleMode === "item") {
     //if (reset || !datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
      
-    // if (selectedId && !$("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedId) + '"]')) selectItemByNid(selectedId, true);
-     if (selectedId && $("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedId) + '"]')) selectItemByNid(selectedId, true);
+     if (selectedId && !$("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedId) + '"]')) renderDateTimeWindow(selectedId, true);
+   
     // if (selectedId ) renderDateTimeWindow(selectedId, true);
     updateHeaderIndicators();
     return;
@@ -1167,6 +1167,11 @@ function jumpHit(i) {
   const h = hitList[hitCursor];
 
   //selectedId = h.urlid;
+  
+  console.log( "in jumpHit , h.urlid is :", h.urlid   );
+  console.log( "in jumpHit , h.nid is :", h.nid   );
+  
+  
   selectedId = h.nid;
   openChats.add(h.convKey);
 
@@ -1176,7 +1181,7 @@ function jumpHit(i) {
 
   if (middleMode === "item") {
     // Preserve the existing DateTime-pane behavior.
-    //renderSlice(true);
+    renderSlice(true);
     //alert (' hit ');
   } else {
     // Find the target session in the complete search result list.
