@@ -23,9 +23,14 @@ const $ = (id) => document.getElementById(id);
 let rows = [];
 let filter = "all";
 let selectedId = null;
-let includeComments = false;
-let includeImpAsks = false;
-let includeImpAns = false;
+let showOnMsg = false;
+let showSei = false;
+let showSeo = false;
+let showAsk = false;
+let showAns = false;
+let includeComments = false; // alias of showOnMsg, kept for older call sites
+let includeImpAsks = false;  // alias: sei or manual-sync asks
+let includeImpAns = false;   // alias: seo or manual-sync answers
 let liveSort = "ts-asc";
 let middleMode = "ptt"; // sort: "ptt" = session/title order, "item" = date-time item order
 let dispStyle = "ptt"; // display: "ptt" (default multi-line tree) or "flat"
@@ -130,8 +135,16 @@ function fmtTs(ts) {
   if (Number.isNaN(d.getTime())) return "";
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
 }
+function isTyped(c) {
+  if (!c) return false;
+  const k = String(c.recordKey || "");
+  return c.source === "onMsg" || c.source === "seen" || c.source === "seen-dummy"
+    || c.source === "import"
+    || /\|(?:onMsg|ask|ans|sei|seo)\|/.test(k);
+}
 function isOnMsg(c) {
-  return !!(c && (c.source === "onMsg" || String(c.recordKey || "").includes("|onMsg|")));
+  // Untyped old rows (source "live", no marker in the key) are grouped as onMsg.
+  return !!(c && (c.source === "onMsg" || String(c.recordKey || "").includes("|onMsg|") || !isTyped(c)));
 }
 function isSeenRecord(c) {
   return !!(c && (c.source === "seen" || c.source === "seen-dummy"));
@@ -146,6 +159,28 @@ function isImp(c) {
   return !!(c.responseId);
 }
 function isLive(c) { return isOnMsg(c) || !isImp(c); }
+function isSeenAsk(c) { return isSeenRecord(c) && !isOnMsg(c); }
+function isSyncAsk(c) { return !!(c && c.source === "import" && !isOnMsg(c)); }
+function isSeenAns(a) { return !!(a && (a.source === "seen" || a.source === "seen-dummy")); }
+function isSyncAns(a) { return !!(a && a.source === "import"); }
+function showAskNode(c) {
+  if (!c) return false;
+  if (isOnMsg(c)) return showOnMsg;
+  if (isSeenAsk(c)) return showSei;
+  if (isSyncAsk(c)) return showAsk;
+  return false;
+}
+function showAnsNode(a) {
+  if (!a) return false;
+  if (isSeenAns(a)) return showSeo;
+  if (isSyncAns(a)) return showAns;
+  return false;
+}
+function syncSourceFlags() {
+  includeComments = showOnMsg;
+  includeImpAsks = showSei || showAsk;
+  includeImpAns = showSeo || showAns;
+}
 
 async function getAll() {
   try {
@@ -416,9 +451,8 @@ function matchRow(r, q) {
   if (!tokens.length) return true;
   if (hayHasTokens(pageHay(r), tokens)) return true;
   const list = viewAsks(r.convKey);
-  if (includeComments && list.some((c) => isLive(c) && hayHasTokens(askHay(c), tokens))) return true;
-  if (includeImpAsks && list.some((c) => isImp(c) && hayHasTokens(askHay(c), tokens))) return true;
-  if (includeImpAns && list.some((c) => (c.answers || []).some((a) => hayHasTokens(ansHay(a), tokens)))) return true;
+  if (list.some((c) => showAskNode(c) && hayHasTokens(askHay(c), tokens))) return true;
+  if (list.some((c) => (c.answers || []).some((a) => showAnsNode(a) && hayHasTokens(ansHay(a), tokens)))) return true;
   return false;
 }
 
@@ -605,18 +639,20 @@ function pttNode(opts) {
 
 function pttAskNode(c, tokens, kidsOpen, kind, convKey, titlePane = false) {
 
-  const tag = kind === "onMsg" ? ("onMsg#" + c.localIndex) : ("ask#" + c.localIndex);
+  const tag = isOnMsg(c) ? ("onMsg#" + c.localIndex)
+    : isSeenAsk(c) ? ("sei#" + c.localIndex)
+    : ("ask#" + c.localIndex);
   const nid = (kind === "ask" ? askNidPrefix(c) : kind) + "-" + (c.recordKey || c.localIndex);
   if (convKey) nidToConvKey.set(nid, convKey);
 
-  const seenAns = (c.answers || []).some((a) => a.source === "seen");
-  const kidsHtml = (kind !== "onMsg" && (includeImpAns || seenAns) && (c.answers || []).some((a) => inTime(a.ts)))
-    ? (c.answers || []).filter((a) => inTime(a.ts) && (includeImpAns || a.source === "seen")).map(function (a) {
+  const shownAnswers = (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a));
+  const kidsHtml = (kind !== "onMsg" && shownAnswers.length)
+    ? shownAnswers.map(function (a) {
         if (filter === "favorites" && !nodeLiked(a)) return "";
         return pttNode({
           nid: answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex),
           ck: convKey,
-          tag: "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex),
+          tag: (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex),
           body: fmtTs(a.ts) + "  " + (a.text || ""),
           bodyPrefix: fmtTs(a.ts) + "  ",
           foldText: a.text || "",
@@ -653,9 +689,9 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey, titlePane = false) {
 function askBlock(r, list, tokens) {
   const parts = [];
   const showAsk = (c) => filter !== "favorites" || nodeLiked(c) || (c.answers || []).some(nodeLiked);
-  if (includeComments || filter === "favorites") {
+  if (showOnMsg || filter === "favorites") {
     const hitMode = tokens.length && (chatUnfoldModes.get(String(r.convKey)) || "hit") === "hit";
-    const live = liveAsks(list).filter((c) => inTime(c.ts) && showAsk(c) &&
+    const live = liveAsks(list).filter((c) => isOnMsg(c) && inTime(c.ts) && showAsk(c) &&
       (!hitMode || searchHitNids.has("onMsg-" + (c.recordKey || c.localIndex))));
     if (live.length) {
       parts.push('<div class="ptt-tree">' + live.map(function (c) {
@@ -663,18 +699,18 @@ function askBlock(r, list, tokens) {
       }).join("") + "</div>");
     }
   }
-  if (includeImpAsks || includeImpAns || list.some((c) => c.source === "seen")) {
-    const imp = list.filter((c) => showAsk(c) && (c.source === "seen" || (includeImpAsks && isImp(c)) || (includeImpAns && isImp(c)) || (filter === "favorites" && (nodeLiked(c) || (c.answers || []).some(nodeLiked)))) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts))));
+  if (showSei || showAsk || showSeo || showAns || filter === "favorites") {
+    const imp = list.filter((c) => !isOnMsg(c) && showAsk(c) && (showAskNode(c) || (c.answers || []).some(showAnsNode) || (filter === "favorites" && (nodeLiked(c) || (c.answers || []).some(nodeLiked)))) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts))));
     if (imp.length) {
       const ansOpenAll = openAns.has(r.convKey) || batchAnsOpen;
       const hitMode = tokens.length && (chatUnfoldModes.get(String(r.convKey)) || "hit") === "hit";
       const nodes = imp.map(function (c) {
-        const hitAns = tokens.length && (c.answers || []).some(function (a) { return searchHitNids.has(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex)); });
-        const hitAsk = searchHitNids.has(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
-        const openKids = ansOpenAll || forceOpenAsk.has(c.recordKey) || hitAns;
+        const hitAns = tokens.length && (c.answers || []).some(function (a) { return showAnsNode(a) && searchHitNids.has(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex)); });
+        const hitAsk = showAskNode(c) && searchHitNids.has(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
+        const openKids = ansOpenAll || forceOpenAsk.has(c.recordKey) || hitAns || (c.answers || []).some(showAnsNode);
         if (hitMode && !hitAsk && !hitAns) return "";
-        if (!includeImpAsks && includeImpAns && !hitAns && !openKids) return "";
-        return pttAskNode(c, tokens, openKids && includeImpAns, "ask", r.convKey, true);
+        if (!showAskNode(c) && !openKids) return "";
+        return pttAskNode(c, tokens, openKids, "ask", r.convKey, true);
       }).join("");
       parts.push('<div class="ptt-tree">' + nodes + "</div>");
     }
@@ -710,19 +746,17 @@ function collectHits(r, tokens) {
     });
   }
   if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r));
-  if (includeComments) {
-    liveAsks(list).filter((c) => inTime(c.ts)).forEach(function (c) {
+  if (showOnMsg) {
+    liveAsks(list).filter((c) => isOnMsg(c) && inTime(c.ts)).forEach(function (c) {
       add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true);
     });
   }
-  if (includeImpAsks || includeImpAns) {
-    list.filter((c) => isImp(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
-      if (includeImpAsks && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), "ask#" + c.localIndex, c.text || "", c.ts, true);
-      if (includeImpAns) (c.answers || []).filter((a) => inTime(a.ts)).forEach(function (a) {
-        add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), "ans#" + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
-      });
+  list.filter((c) => !isOnMsg(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
+    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true);
+    (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a)).forEach(function (a) {
+      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
     });
-  }
+  });
 }
 
 function rowHtml(r) {
@@ -757,15 +791,13 @@ function collectItems(sessions, tokens) {
     list.forEach(function (c) {
       const answers = c.answers || [];
       const isLiveAsk = isOnMsg(c) || !isImp(c);
-      const hasShownAns = includeImpAns && answers.some(function (a) { return inTime(a.ts); });
-      if (isLiveAsk && !includeComments && isOnMsg(c)) return;
-      // An imported ask is shown for its own checkbox, or so its answers have a parent.
-      if (!isLiveAsk && !includeImpAsks && !hasShownAns) return;
-      if (!(isOnMsg(c) || !isImp(c) || (includeImpAsks && isImp(c)) || hasShownAns)) return;
+      const hasShownAns = answers.some(function (a) { return inTime(a.ts) && showAnsNode(a); });
+      if (isOnMsg(c) && !showOnMsg) return;
+      if (!isOnMsg(c) && !showAskNode(c) && !hasShownAns) return;
       if (!inTime(c.ts) && !hasShownAns) return;
       if (filter === "favorites" && !nodeLiked(c) && !answers.some(nodeLiked)) return;
       const askHit = !tokens.length || hayHasAll(askHay(c), tokens) || hayHasAll(pageHay(r), tokens);
-      const ansHit = includeImpAns && answers.some(function (a) { return hayHasAll(ansHay(a), tokens); });
+      const ansHit = answers.some(function (a) { return showAnsNode(a) && hayHasAll(ansHay(a), tokens); });
       if (tokens.length && !askHit && !ansHit) return;
       items.push({
         ts: c.ts || 0,
@@ -825,7 +857,7 @@ function datetimeRangeHtml(start, end, tokens) {
         source: it.source || "",
         liked: !!it.liked,
         answers: it.answers || []
-      }, tokens, includeImpAns, it.kind, g.convKey);
+      }, tokens, (it.answers || []).some(showAnsNode), it.kind, g.convKey);
     }).join("");
     html.push('<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>");
   });
@@ -1180,7 +1212,7 @@ function jumpHit(i) {
   selectedId = h.nid;
   openChats.add(h.convKey);
 
-  if (String(h.node).indexOf("ans#") === 0) {
+  if (String(h.node).indexOf("ans#") === 0 || String(h.node).indexOf("seo#") === 0) {
     openAns.add(h.convKey);
   }
 
@@ -1890,19 +1922,25 @@ function bindCheck(id, labelId, apply, key) {
   });
   return paint;
 }
-const paintInclude = bindCheck("includeComments", "includeCommentsLabel", function (v) { includeComments = v; }, "includeComments");
-const paintImpAsks = bindCheck("includeImpAsks", "includeImpAsksLabel", function (v) { includeImpAsks = v; }, "includeImpAsks");
-const paintImpAns = bindCheck("includeImpAns", "includeImpAnsLabel", function (v) { includeImpAns = v; }, "includeImpAns");
+const paintOnMsg = bindCheck("showOnMsg", "showOnMsgLabel", function (v) { showOnMsg = v; syncSourceFlags(); }, "showOnMsg");
+const paintSei = bindCheck("showSei", "showSeiLabel", function (v) { showSei = v; syncSourceFlags(); }, "showSei");
+const paintSeo = bindCheck("showSeo", "showSeoLabel", function (v) { showSeo = v; syncSourceFlags(); }, "showSeo");
+const paintAsk = bindCheck("showAsk", "showAskLabel", function (v) { showAsk = v; syncSourceFlags(); }, "showAsk");
+const paintAns = bindCheck("showAns", "showAnsLabel", function (v) { showAns = v; syncSourceFlags(); }, "showAns");
 
-chrome.storage.local.get({ includeComments: false, includeImpAsks: false, includeImpAns: false, liveAskSort: "ts-asc", explorerSearchHist: [], explorerFromHist: [], explorerToHist: [] }).then(function (bag) {
-  paintInclude(bag.includeComments);
-  paintImpAsks(bag.includeImpAsks);
-  paintImpAns(bag.includeImpAns);
+chrome.storage.local.get({ showOnMsg: false, showSei: false, showSeo: false, showAsk: false, showAns: false, liveAskSort: "ts-asc", explorerSearchHist: [], explorerFromHist: [], explorerToHist: [], explorerFromValue: "", explorerToValue: "" }).then(function (bag) {
+  paintOnMsg(bag.showOnMsg);
+  paintSei(bag.showSei);
+  paintSeo(bag.showSeo);
+  paintAsk(bag.showAsk);
+  paintAns(bag.showAns);
   liveSort = bag.liveAskSort === "ts-desc" ? "ts-desc" : "ts-asc";
   $("liveSort").value = liveSort;
   searchHist = Array.isArray(bag.explorerSearchHist) ? bag.explorerSearchHist.slice(0, 40) : [];
   fromHist = Array.isArray(bag.explorerFromHist) ? bag.explorerFromHist.slice(0, 20) : [];
   toHist = Array.isArray(bag.explorerToHist) ? bag.explorerToHist.slice(0, 20) : [];
+  if ($("fromBox")) $("fromBox").value = bag.explorerFromValue || "";
+  if ($("toBox")) $("toBox").value = bag.explorerToValue || "";
   paintHist();
   paintTimeHist("from");
   paintTimeHist("to");
@@ -2065,6 +2103,12 @@ function paintTimeHist(which) {
   if (!box) return;
   box.innerHTML = arr.map((s) => "<div>" + esc(s) + "</div>").join("");
 }
+function saveTimeValue(which, value) {
+  const key = which === "from" ? "explorerFromValue" : "explorerToValue";
+  const o = {};
+  o[key] = String(value || "");
+  try { chrome.storage.local.set(o); } catch (_) {}
+}
 function bindTimeBox(which) {
   const box = $(which === "from" ? "fromBox" : "toBox");
   const hist = $(which === "from" ? "fromHist" : "toHist");
@@ -2072,16 +2116,17 @@ function bindTimeBox(which) {
   const picker = $(which === "from" ? "fromPicker" : "toPicker");
   box.addEventListener("focus", function () { hist.style.display = (which === "from" ? fromHist : toHist).length ? "block" : "none"; });
   box.addEventListener("blur", function () {
-    setTimeout(function () { hist.style.display = "none"; pushTimeHist(which, box.value); }, 180);
+    setTimeout(function () { hist.style.display = "none"; pushTimeHist(which, box.value); saveTimeValue(which, box.value); }, 180);
   });
   box.addEventListener("input", function () {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(function () { seek($("q").value); }, 120);
+    searchTimer = setTimeout(function () { saveTimeValue(which, box.value); seek($("q").value); }, 120);
   });
   hist.addEventListener("mousedown", function (e) {
     const d = e.target.closest("div");
     if (!d) return;
     box.value = d.textContent;
+    saveTimeValue(which, box.value);
     seek($("q").value);
   });
   function openCal() {
@@ -2095,6 +2140,7 @@ function bindTimeBox(which) {
   picker.addEventListener("input", applyPicker);
   function applyPicker() {
     box.value = picker.value || "";
+    saveTimeValue(which, box.value);
     if (box.value) pushTimeHist(which, box.value);
     seek($("q").value);
   }
@@ -2102,6 +2148,7 @@ function bindTimeBox(which) {
   clr.addEventListener("click", function () {
     box.value = "";
     picker.value = "";
+    saveTimeValue(which, "");
     seek($("q").value);
   });
 }

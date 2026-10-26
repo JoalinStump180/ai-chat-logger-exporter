@@ -107,9 +107,11 @@
       <input id="foldN" type="number" min="0" step="1" value="3" aria-label="Last lines to keep" />
     </label>
     <label title="Hide the bottom hit-results pane and skip rendering it during searches"><input type="checkbox" id="invalidateLowerPane" /> Invalidate lower pane</label>
-    <label><input type="checkbox" id="includeComments" /> Including asks <span id="includeCommentsLabel">off</span></label>
-    <label><input type="checkbox" id="includeImpAsks" /> Including imported asks <span id="includeImpAsksLabel">off</span></label>
-    <label><input type="checkbox" id="includeImpAns" /> Including imported answer/s <span id="includeImpAnsLabel">off</span></label>
+    <label title="Live typed asks, and old untyped rows"><input type="checkbox" id="showOnMsg" /> onMsg <span id="showOnMsgLabel">off</span></label>
+    <label title="Seen asks"><input type="checkbox" id="showSei" /> sei <span id="showSeiLabel">off</span></label>
+    <label title="Seen answers"><input type="checkbox" id="showSeo" /> seo <span id="showSeoLabel">off</span></label>
+    <label title="Manual-sync asks"><input type="checkbox" id="showAsk" /> ask <span id="showAskLabel">off</span></label>
+    <label title="Manual-sync answers"><input type="checkbox" id="showAns" /> ans <span id="showAnsLabel">off</span></label>
     <label>Live ask sort
       <select id="liveSort">
         <option value="ts-asc">time &#8593;</option>
