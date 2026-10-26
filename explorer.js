@@ -228,7 +228,7 @@ async function loadAsksIndex() {
 }
 
 const PAGE = 80;
-const DT_BATCH = 20; // items loaded per chronological scroll batch
+const DT_BATCH = 120; // items loaded per chronological scroll batch
 let datetimeItems = [];
 let dtStart = 0;
 let dtEnd = 0;
@@ -927,7 +927,7 @@ function renderItemMode(tokens) {
   // A fresh search/filter invalidates the cached chronological list; ordinary
   // pane switching reuses it and does not rebuild the DOM.
   buildDateTimeItems(tokens);
-  renderDateTimeWindow(selectedNid, false);
+  renderDateTimeWindow(selectedId, false);
 }
 
 function getVisibleItems() {
@@ -1041,10 +1041,11 @@ function paintHits(tokens) {
 
 function renderSlice(reset) {
   if (middleMode === "item") {
-    if (reset || !datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
+    //if (reset || !datetimeItems.length) renderItemMode(parseSearch($("q").value).tokens);
      
-    //else if (selectedNid && !$("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedNid) + '"]')) renderDateTimeWindow(selectedNid, false);
-    else if (selectedNid ) renderDateTimeWindow(selectedNid, true);
+    // if (selectedId && !$("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedId) + '"]')) selectItemByNid(selectedId, true);
+     if (selectedId && $("dateTimeView").querySelector('[data-nid="' + CSS.escape(selectedId) + '"]')) selectItemByNid(selectedId, true);
+    // if (selectedId ) renderDateTimeWindow(selectedId, true);
     updateHeaderIndicators();
     return;
   }
@@ -1165,7 +1166,8 @@ function jumpHit(i) {
   hitCursor = (i + hitList.length) % hitList.length;
   const h = hitList[hitCursor];
 
-  selectedId = h.urlid;
+  //selectedId = h.urlid;
+  selectedId = h.nid;
   openChats.add(h.convKey);
 
   if (String(h.node).indexOf("ans#") === 0) {
@@ -1174,7 +1176,8 @@ function jumpHit(i) {
 
   if (middleMode === "item") {
     // Preserve the existing DateTime-pane behavior.
-    renderSlice(true);
+    //renderSlice(true);
+    //alert (' hit ');
   } else {
     // Find the target session in the complete search result list.
     const targetIndex = matched.findIndex(
@@ -1236,106 +1239,18 @@ function jumpHit(i) {
   });
 }
 
-
-
-function jumpHit3(i) {
-  if (!hitList.length) return;
-
-  hitCursor = (i + hitList.length) % hitList.length;
-  const h = hitList[hitCursor];
-
-  selectedId = h.urlid;
-  openChats.add(h.convKey);
-
-  if (String(h.node).indexOf("ans#") === 0) {
-    openAns.add(h.convKey);
-  }
-
-  if (middleMode === "item") {
-    // Keep the existing DateTime-pane behavior for now.
-    renderSlice(true);
-  } else {
-    // Title pane: render the page containing the target session.
-    const targetIndex = matched.findIndex(
-      r => String(r.id) === String(h.urlid)
-    );
-
-    if (targetIndex >= 0) {
-      const tb = $("titleView");
-      const pageStart = Math.floor(targetIndex / PAGE) * PAGE;
-      const pageItems = matched.slice(pageStart, pageStart + PAGE);
-
-      //tb.innerHTML = pageItems.map(rowHtml).join("");
-      shown = pageStart + pageItems.length;
-
-      $("empty").hidden = matched.length > 0;
-      $("status").textContent = shown + " of " + matched.length + " shown";
-
-      updateHeaderIndicators();
-    }
-  }
-
-  paintHits(parseSearch($("q").value).tokens);
-
-  document.querySelectorAll("#hitBody tr").forEach((tr) => {
-    tr.classList.toggle(
-      "on",
-      Number(tr.dataset.hi) === hitCursor
-    );
-  });
-
-  // Scroll the target session row into view in the title pane.
-  const row = document.querySelector(
-    '#titleView tr[data-id="' + CSS.escape(String(h.urlid)) + '"]'
-  );
-
-  if (row) {
-    row.scrollIntoView({ block: "center" });
-  }
-
-  // Locate and highlight the specific hit node.
-  const activeBody = middleMode === "item"
-    ? $("dateTimeView")
-    : $("titleView");
-
-  const node = activeBody.querySelector(
-    '.ptt-node[data-nid="' + CSS.escape(String(h.nid)) + '"]'
-  );
-
-  if (node) {
-    node.classList.add("ptt-jump");
-    node.scrollIntoView({ block: "center" });
-    setTimeout(() => node.classList.remove("ptt-jump"), 1200);
-  }
-}
-
-
-
-
-function jumpHit2(i) {
-  if (!hitList.length) return;
-  hitCursor = (i + hitList.length) % hitList.length;
-  const h = hitList[hitCursor];
-  selectedId = h.urlid;
-  openChats.add(h.convKey);
-  if (String(h.node).indexOf("ans#") === 0) openAns.add(h.convKey);
-  
-  //datetimeRangeHtml(dtStart, dtEnd, tokens);
-  //renderSlice(true);   ----  by jcx . 
-  renderSlice(true);   
-  //updateHeaderIndicators();
-  paintHits(parseSearch($("q").value).tokens);
-  document.querySelectorAll("#hitBody tr").forEach((tr) => tr.classList.toggle("on", Number(tr.dataset.hi) === hitCursor));
-  const row = document.querySelector('#titleView tr[data-id="' + h.urlid + '"]');
-  if (row) row.scrollIntoView({ block: "center" });
-  const activeBody = middleMode === "item" ? $("dateTimeView") : $("titleView");
-  const node = activeBody.querySelector('.ptt-node[data-nid="' + CSS.escape(h.nid) + '"]');
-  if (node) {
-    node.classList.add("ptt-jump");
-    node.scrollIntoView({ block: "center" });
-    setTimeout(() => node.classList.remove("ptt-jump"), 1200);
-  }
-}
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
 
 async function loadRecycle() {
   recycleItems = [];
