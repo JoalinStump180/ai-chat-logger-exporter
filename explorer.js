@@ -2548,7 +2548,7 @@ function enforceSlidingWindow(direction) {
       setLine("site", "Site", session.platform);
       setLine("siteUrl", "Site URL", session.url);
       setLine("itemTitle", "Hovered item", kind === "answer" ? "Answer" : kind === "onMsg" ? "Ask / message" : "Ask");
-      setLine("itemText", "Item text", record && record.text != null ? record.text : domText);
+      //setLine("itemText", "Item text", record && record.text != null ? record.text : domText);
       setLine("kind", "Type", kind);
       setLine("nid", "NID", nid);
       setLine("convKey", "convKey", convKey);

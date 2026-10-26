@@ -80,37 +80,6 @@ and have a try ,
 
 
 
+Known issue/s:
 
-
-
-To let ,  in datetime pane, the mouse scrolling is more 'stable' , change this in explorer.js : 
-
-    if (scrollPercentage >= 0.95) {
-      if (dtEnd < datetimeItems.length) {
-        isScrollFetching = true;
-        enforceSlidingWindow("down");
-        
-        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
-        // This drops the percentage below 95%, so it won't auto-trigger again 
-        // until the user actively scrolls down further.
-        setTimeout(() => {
-          el.scrollTop = el.scrollHeight * 0.85;
-          isScrollFetching = false;
-        }, 50);
-
-
-
-into this:  
-
-    if (scrollPercentage >= 0.99) {
-      if (dtEnd < datetimeItems.length) {
-        isScrollFetching = true;
-        enforceSlidingWindow("down");
-        
-        // --- BREAK THE LOOP: Nudge scroll position up to ~85% ---
-        // This drops the percentage below 95%, so it won't auto-trigger again 
-        // until the user actively scrolls down further.
-        setTimeout(() => {
-          el.scrollTop -= 200;
-          isScrollFetching = false;
-        }, 0);
+1.  datetime pane 's prev/next hit feature is not ready --- but I have no time to fix , this is because in the jumpHit() , it is passing h.urlid to renderSlice() , but renderSlice() need is h.id format, not h.urlid format.  
