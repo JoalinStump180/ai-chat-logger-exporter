@@ -755,25 +755,30 @@ function collectItems(sessions, tokens) {
   sessions.forEach(function (r) {
     const list = viewAsks(r.convKey);
     list.forEach(function (c) {
+      const answers = c.answers || [];
       const isLiveAsk = isOnMsg(c) || !isImp(c);
+      const hasShownAns = includeImpAns && answers.some(function (a) { return inTime(a.ts); });
       if (isLiveAsk && !includeComments && isOnMsg(c)) return;
-      if (!isLiveAsk && !includeImpAsks) return;
-      if (isOnMsg(c) || !isImp(c) || (includeImpAsks && isImp(c))) {
-        if (!inTime(c.ts)) return;
-        if (filter === "favorites" && !nodeLiked(c) && !(c.answers || []).some(nodeLiked)) return;
-        if (tokens.length && !hayHasAll(askHay(c), tokens) && !hayHasAll(pageHay(r), tokens)) return;
-        items.push({
-          ts: c.ts || 0,
-          convKey: r.convKey,
-          session: r,
-          kind: isOnMsg(c) ? "onMsg" : "ask",
-          source: c.source || "",
-          localIndex: c.localIndex,
-          text: c.text || "",
-          recordKey: c.recordKey || "",
-          liked: !!c.liked
-        });
-      }
+      // An imported ask is shown for its own checkbox, or so its answers have a parent.
+      if (!isLiveAsk && !includeImpAsks && !hasShownAns) return;
+      if (!(isOnMsg(c) || !isImp(c) || (includeImpAsks && isImp(c)) || hasShownAns)) return;
+      if (!inTime(c.ts) && !hasShownAns) return;
+      if (filter === "favorites" && !nodeLiked(c) && !answers.some(nodeLiked)) return;
+      const askHit = !tokens.length || hayHasAll(askHay(c), tokens) || hayHasAll(pageHay(r), tokens);
+      const ansHit = includeImpAns && answers.some(function (a) { return hayHasAll(ansHay(a), tokens); });
+      if (tokens.length && !askHit && !ansHit) return;
+      items.push({
+        ts: c.ts || 0,
+        convKey: r.convKey,
+        session: r,
+        kind: isOnMsg(c) ? "onMsg" : "ask",
+        source: c.source || "",
+        localIndex: c.localIndex,
+        text: c.text || "",
+        recordKey: c.recordKey || "",
+        liked: !!c.liked,
+        answers: answers
+      });
     });
   });
   items.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
@@ -819,8 +824,8 @@ function datetimeRangeHtml(start, end, tokens) {
         recordKey: it.recordKey,
         source: it.source || "",
         liked: !!it.liked,
-        answers: []
-      }, tokens, false, it.kind, g.convKey);
+        answers: it.answers || []
+      }, tokens, includeImpAns, it.kind, g.convKey);
     }).join("");
     html.push('<tr class="cmt-row" data-ck="' + esc(g.convKey) + '"><td colspan="6"><div class="ptt-tree">' + ptt + "</div></td></tr>");
   });
