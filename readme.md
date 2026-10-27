@@ -1,4 +1,4 @@
-# AI Chat Logger — Concise User Guide
+#  Chat Logger  
 
 **Baseline:** `alccurr-0.3.9-20261026-2241-title-edit-lock-all.zip`
 
