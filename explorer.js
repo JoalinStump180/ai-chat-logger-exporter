@@ -48,6 +48,7 @@ const messageFoldOverrides = new Map();
 const chatUnfoldModes = new Map();
 // Item identities that contain at least one hit in the current search session.
 const searchHitNids = new Set();
+const openedGaps = new Set(); // "fromNid->toNid": non-hit items between two hits are unfolded
 let lastUnfoldQuery = null;
 
 // UI-only preferences live in a separate IndexedDB database to avoid changing
@@ -538,7 +539,7 @@ function messageShownHtml(text, tokens, nid, isExpanded, convKey, titlePane) {
   // not WHICH lines are printed inside each included node. Keep all of the
   // logical folded text when collapsed, and the complete source text when
   // expanded; search matches remain highlighted without deleting other lines.
-  if (hitMode && !searchHitNids.has(key)) return "";
+  if (hitMode && !searchHitNids.has(key) && !inOpenedGap(key, convKey)) return "";
   return highlightText(foldedMessageText(text, isExpanded), tokens);
 }
 function messageContentHtml(text, tokens, nid, expanded, convKey, titlePane) {
@@ -598,6 +599,89 @@ function liveAsks(list) {
   return live;
 }
 
+
+function chatItemOrder(convKey) {
+  const list = viewAsks(convKey);
+  const out = [];
+  list.forEach(function (c) {
+    if (!inTime(c.ts) && !(c.answers || []).some(function (a) { return inTime(a.ts); })) return;
+    if (isOnMsg(c)) {
+      if (showOnMsg) out.push({ nid: "onMsg-" + (c.recordKey || c.localIndex), kind: "ask" });
+      return;
+    }
+    if (showAskNode(c)) out.push({ nid: askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), kind: "ask" });
+    (c.answers || []).forEach(function (a) {
+      if (!inTime(a.ts) || !showAnsNode(a)) return;
+      out.push({ nid: answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), kind: "answer" });
+    });
+  });
+  return out;
+}
+function gapAfter(nid, convKey) {
+  const order = chatItemOrder(convKey);
+  const i = order.findIndex(function (it) { return it.nid === nid; });
+  if (i < 0) return null;
+  const between = [];
+  let to = "end";
+  for (let j = i + 1; j < order.length; j++) {
+    if (searchHitNids.has(order[j].nid)) { to = order[j].nid; break; }
+    between.push(order[j].nid);
+  }
+  if (!between.length) return null;
+  return { from: nid, to: to, nids: between, count: between.length, key: nid + "->" + to };
+}
+function inOpenedGap(nid, convKey) {
+  const order = chatItemOrder(convKey);
+  const i = order.findIndex(function (it) { return it.nid === nid; });
+  if (i < 0) return false;
+  for (const key of openedGaps) {
+    const parts = key.split("->");
+    const from = order.findIndex(function (it) { return it.nid === parts[0]; });
+    if (from < 0 || from >= i) continue;
+    let to = order.length;
+    if (parts[1] !== "end") {
+      to = order.findIndex(function (it) { return it.nid === parts[1]; });
+      if (to < 0) continue;
+    }
+    if (i < to) return true;
+  }
+  return false;
+}
+function nodeHtmlFor(nid, convKey, tokens) {
+  const hit = findByNid(nid);
+  if (!hit) return "";
+  if (hit.kind === "answer") {
+    const a = hit.node;
+    const parent = hit.parent;
+    return pttNode({
+      nid: nid,
+      ck: convKey,
+      tag: (isSeenAns(a) ? "seo#" : "ans#") + (parent ? parent.localIndex : "?") + "." + (a.localIndex == null ? "?" : a.localIndex),
+      body: fmtTs(a.ts) + "  " + (a.text || ""),
+      bodyPrefix: fmtTs(a.ts) + "  ",
+      foldText: a.text || "",
+      tokens: tokens,
+      kidsHtml: "",
+      open: false,
+      liked: nodeLiked(a),
+      titlePane: true,
+      recordKey: a.recordKey || "",
+      storeKind: "answer",
+      editText: a.text || ""
+    });
+  }
+  return pttAskNode(hit.node, tokens, false, hit.kind, convKey, true);
+}
+function gapButtonHtml(nid, convKey, tokens) {
+  if (!tokens || !tokens.length || !nid || !convKey) return "";
+  if ((chatUnfoldModes.get(String(convKey)) || "hit") !== "hit") return "";
+  const gap = gapAfter(nid, convKey);
+  if (!gap) return "";
+  const open = openedGaps.has(gap.key);
+  return '<button type="button" class="ptt-gap" data-gap="' + esc(gap.key) + '" title="' +
+    (open ? "Fold" : "Unfold") + " " + gap.count + ' non-hit item(s) before the next hit">' +
+    gap.count + "</button>";
+}
 function togPair(open, extra) {
   const mark = open ? "\u2212" : "+";
   const left = '<button type="button" class="ptt-tog" data-side="L" ' + extra + ">" + mark + "</button>";
@@ -615,6 +699,7 @@ function pttNode(opts) {
     left: '<button type="button" class="ptt-tog" disabled>\u00b7</button>',
     right: '<button type="button" class="ptt-tog" disabled>\u00b7</button>'
   };
+  const gapBtn = gapButtonHtml(opts.nid, opts.ck, opts.tokens);
   const kids = hasKids
     ? '<div class="ptt-kids"' + (open ? "" : " hidden") + ">" + opts.kidsHtml + "</div>"
     : "";
@@ -632,7 +717,7 @@ function pttNode(opts) {
     ? esc(opts.bodyPrefix || '') + messageContentHtml(opts.foldText, opts.tokens, opts.nid, false, opts.ck, !!opts.titlePane)
     : highlightText(opts.body, opts.tokens);
   return '<div class="ptt-node" data-nid="' + esc(opts.nid) + '" ' + ckAttr + '><div class="ptt-row">' +
-    t.left + label +
+    t.left + gapBtn + label +
     (hasKids ? t.right : "") +
     '<span class="ptt-txt">  ' + bodyHtml + "</span>" + menu + "</div>" + kids + "</div>";
 }
@@ -645,7 +730,9 @@ function pttAskNode(c, tokens, kidsOpen, kind, convKey, titlePane = false) {
   const nid = (kind === "ask" ? askNidPrefix(c) : kind) + "-" + (c.recordKey || c.localIndex);
   if (convKey) nidToConvKey.set(nid, convKey);
 
-  const shownAnswers = (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a));
+  const hitModeHere = !!(tokens && tokens.length && convKey && (chatUnfoldModes.get(String(convKey)) || "hit") === "hit");
+  const shownAnswers = (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a) &&
+    (!hitModeHere || searchHitNids.has(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex)) || inOpenedGap(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), convKey)));
   const kidsHtml = (kind !== "onMsg" && shownAnswers.length)
     ? shownAnswers.map(function (a) {
         if (filter === "favorites" && !nodeLiked(a)) return "";
@@ -692,7 +779,7 @@ function askBlock(r, list, tokens) {
   if (showOnMsg || filter === "favorites") {
     const hitMode = tokens.length && (chatUnfoldModes.get(String(r.convKey)) || "hit") === "hit";
     const live = liveAsks(list).filter((c) => isOnMsg(c) && inTime(c.ts) && showAsk(c) &&
-      (!hitMode || searchHitNids.has("onMsg-" + (c.recordKey || c.localIndex))));
+      (!hitMode || searchHitNids.has("onMsg-" + (c.recordKey || c.localIndex)) || inOpenedGap("onMsg-" + (c.recordKey || c.localIndex), r.convKey)));
     if (live.length) {
       parts.push('<div class="ptt-tree">' + live.map(function (c) {
         return pttAskNode(c, tokens, false, "onMsg", r.convKey, true);
@@ -708,7 +795,8 @@ function askBlock(r, list, tokens) {
         const hitAns = tokens.length && (c.answers || []).some(function (a) { return showAnsNode(a) && searchHitNids.has(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex)); });
         const hitAsk = showAskNode(c) && searchHitNids.has(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
         const openKids = ansOpenAll || forceOpenAsk.has(c.recordKey) || hitAns || (c.answers || []).some(showAnsNode);
-        if (hitMode && !hitAsk && !hitAns) return "";
+        const gapAsk = inOpenedGap(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), r.convKey);
+        if (hitMode && !hitAsk && !hitAns && !gapAsk) return "";
         if (!showAskNode(c) && !openKids) return "";
         return pttAskNode(c, tokens, openKids, "ask", r.convKey, true);
       }).join("");
@@ -1038,6 +1126,14 @@ function selectItemByNid(nid, scroll = false, scrollMode = "center") {
   return true;
 }
 
+function revealChat(ck) {
+  if (!ck) return;
+  openChats.add(ck);
+  const detail = document.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+  if (detail) detail.hidden = false;
+  const fold = document.querySelector('button.fold[data-ck="' + CSS.escape(ck) + '"]');
+  if (fold) fold.textContent = "\u2212";
+}
 function jumpItem(delta) {
   const items = getVisibleItems();
   if (!items.length) return;
@@ -1046,6 +1142,7 @@ function jumpItem(delta) {
   else idx = (idx + delta + items.length) % items.length;
   const el = items[idx];
   const nid = el.dataset.nid;
+  revealChat(el.dataset.ck || findConvForNid(nid));
   selectItemByNid(nid, true, "head");
 }
 
@@ -1089,7 +1186,13 @@ function renderSlice(reset) {
   const tb = $("titleView");
   if (reset) { shown = 0; tb.innerHTML = ""; }
   const next = matched.slice(shown, shown + PAGE);
-  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+  // jumpHit() may have inserted an out-of-page session directly. Skip any
+  // session header already in the DOM, but still advance through this page's
+  // matched records so pagination cannot loop or duplicate that session.
+  next.forEach(function (r) {
+    const index = matched.indexOf(r);
+    if (index >= 0) insertTitleSessionAtSearchPosition(index);
+  });
   shown += next.length;
   $("empty").hidden = matched.length > 0;
   $("status").textContent = shown + " of " + matched.length + " shown";
@@ -1161,6 +1264,7 @@ function seek(q) {
     // Do not clear messageFoldOverrides: explicit per-message choices survive
     // query changes just like they survive pane refreshes and DOM recreation.
     chatUnfoldModes.clear();
+    openedGaps.clear();
   }
   lastUnfoldQuery = unfoldQuery;
   forceOpenAsk.clear();
@@ -1197,6 +1301,32 @@ function seek(q) {
 
 
 
+function insertTitleSessionAtSearchPosition(targetIndex) {
+  if (targetIndex < 0 || targetIndex >= matched.length) return;
+  const tb = $("titleView");
+  const target = matched[targetIndex];
+  const targetId = String(target.id);
+  // The same session may already have been rendered by normal pagination or
+  // by an earlier jump. Never add a second header for it.
+  if (tb.querySelector('tr[data-id="' + CSS.escape(targetId) + '"]')) return;
+
+  // Insert before the next already-rendered session in search order. This also
+  // keeps pagination correct when it later renders records preceding a row
+  // that jumpHit() inserted out of page order.
+  let anchor = null;
+  for (let j = targetIndex + 1; j < matched.length; j++) {
+    const candidate = tb.querySelector('tr[data-id="' + CSS.escape(String(matched[j].id)) + '"]');
+    if (candidate) { anchor = candidate; break; }
+  }
+  const html = rowHtml(target);
+  if (anchor) anchor.insertAdjacentHTML("beforebegin", html);
+  else tb.insertAdjacentHTML("beforeend", html);
+}
+
+function ensureTitleSessionForHit(targetIndex) {
+  insertTitleSessionAtSearchPosition(targetIndex);
+}
+
 function jumpHit(i) {
   if (!hitList.length) return;
 
@@ -1210,7 +1340,7 @@ function jumpHit(i) {
   
   
   selectedId = h.nid;
-  openChats.add(h.convKey);
+  revealChat(h.convKey);
 
   if (String(h.node).indexOf("ans#") === 0 || String(h.node).indexOf("seo#") === 0) {
     openAns.add(h.convKey);
@@ -1227,13 +1357,10 @@ function jumpHit(i) {
     );
 
     if (targetIndex >= 0) {
-      const tb = $("titleView");
-      const pageStart = Math.floor(targetIndex / PAGE) * PAGE;
-      const pageItems = matched.slice(pageStart, pageStart + PAGE);
-
-      // Render the target page BEFORE looking for the target node.
-      //tb.innerHTML = pageItems.map(rowHtml).join("");
-      shown = pageStart + pageItems.length;
+      // Materialize only the target session if pagination has not rendered it.
+      // This leaves the current title-pane DOM and its scroll-pagination cursor
+      // intact; renderSlice() skips the row if normal scrolling reaches it later.
+      ensureTitleSessionForHit(targetIndex);
 
       $("empty").hidden = matched.length > 0;
       $("status").textContent =
@@ -1543,6 +1670,31 @@ document.addEventListener("click", function (e) {
     });
     return;
   }
+  const gapBtnEl = e.target.closest(".ptt-gap");
+  if (gapBtnEl) {
+    e.preventDefault();
+    e.stopPropagation();
+    const node = gapBtnEl.closest(".ptt-node");
+    const nid = node && node.dataset.nid;
+    const convKey = node && node.dataset.ck;
+    const gap = nid && convKey ? gapAfter(nid, convKey) : null;
+    if (!gap) return;
+    const tokens = parseSearch($("q").value).tokens;
+    if (openedGaps.has(gap.key)) {
+      openedGaps.delete(gap.key);
+      document.querySelectorAll(".ptt-node").forEach(function (el) {
+        if (el.dataset.gapKey === gap.key) el.remove();
+      });
+    } else {
+      openedGaps.add(gap.key);
+      const template = document.createElement("template");
+      template.innerHTML = gap.nids.map(function (n) { return nodeHtmlFor(n, convKey, tokens); }).join("");
+      template.content.querySelectorAll(".ptt-node").forEach(function (el) { el.dataset.gapKey = gap.key; });
+      node.after(template.content);
+    }
+    gapBtnEl.title = (openedGaps.has(gap.key) ? "Fold" : "Unfold") + " " + gap.count + " non-hit item(s) before the next hit";
+    return;
+  }
   if (e.target.closest(".ptt-tog")) { onTreeToggle(e); return; }
   const pttNode = e.target.closest(".ptt-node");
   if (pttNode && pttNode.dataset.nid) {
@@ -1581,32 +1733,25 @@ document.addEventListener("click", function (e) {
   if (fold) {
     const ck = String(fold.dataset.ck || "");
     if (!ck) return;
-    if (openChats.has(ck)) openChats.delete(ck);
-    else openChats.add(ck);
-
-    // With no search query, folding/unfolding affects only this session.
-    // Rebuild its own row/detail rows instead of clearing the entire Title pane;
-    // this avoids the browser's scroll-anchor jump when older rows are expanded.
-    if (String($("q").value || "").trim() === "") {
-      const oldRow = fold.closest('tr[data-id][data-ck]');
-      const session = matched.find(function (r) { return String(r.convKey) === ck; });
-      if (oldRow && session) {
-        let oldDetail = oldRow.nextElementSibling;
-        if (!oldDetail || !oldDetail.classList.contains("cmt-row") || String(oldDetail.dataset.ck || "") !== ck) {
-          oldDetail = null;
-        }
-        const template = document.createElement("template");
-        template.innerHTML = rowHtml(session);
-        const fragment = template.content;
-        oldRow.parentNode.insertBefore(fragment, oldRow);
-        oldRow.remove();
-        if (oldDetail) oldDetail.remove();
-      } else {
-        seek($("q").value);
-      }
+    const bar = fold.closest("tr[data-id][data-ck]");
+    let detail = bar && bar.nextElementSibling;
+    if (!detail || !detail.classList.contains("cmt-row") || String(detail.dataset.ck || "") !== ck) detail = null;
+    if (openChats.has(ck)) {
+      openChats.delete(ck);
+      if (detail) detail.hidden = true;
+      fold.textContent = "+";
     } else {
-      // Keep the established search-mode behavior unchanged.
-      seek($("q").value);
+      openChats.add(ck);
+      if (detail) {
+        detail.hidden = false;
+      } else if (bar) {
+        const session = matched.find(function (r) { return String(r.convKey) === ck; });
+        if (session) {
+          const tokens = parseSearch($("q").value).tokens;
+          bar.insertAdjacentHTML("afterend", '<tr class="cmt-row" data-ck="' + esc(ck) + '"><td colspan="6">' + askBlock(session, viewAsks(ck), tokens) + "</td></tr>");
+        }
+      }
+      fold.textContent = "\u2212";
     }
     return;
   }
@@ -1660,6 +1805,7 @@ function jumpToItemByNid(nid, scroll = true, scrollMode = "center") {
 
   const ck = findConvForNid(nid);
   if (!ck) return;
+  revealChat(ck);
 
   const tokens = parseSearch($("q").value).tokens;
   if (middleMode === "item") {
