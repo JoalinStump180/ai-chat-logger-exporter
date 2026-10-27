@@ -1185,11 +1185,13 @@ function renderSlice(reset) {
   }
   const tb = $("titleView");
   if (reset) { shown = 0; tb.innerHTML = ""; }
-  const next = matched.slice(shown, shown + PAGE);
+  const next = matched.slice(shown, shown + 30);
   // jumpHit() may have inserted an out-of-page session directly. Skip any
   // session header already in the DOM, but still advance through this page's
   // matched records so pagination cannot loop or duplicate that session.
-  next.forEach(function (r) {
+  //if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+  if (0) next.forEach(function (r) {
     const index = matched.indexOf(r);
     if (index >= 0) insertTitleSessionAtSearchPosition(index);
   });
