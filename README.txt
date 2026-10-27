@@ -76,7 +76,10 @@ Usage:
 use the  'import side pane' button to import    'ai-chat-logger-side-pane-example.json' ,
 and have a try , 
 
-
+TODO:  
+1.  in the title pane , when there are too many unfolded and long chat session ,  navigating them need to be :
+     in the empty blank space of the top banner , just above the mode/from/to-calendar line , add an tab-button for each unfolded chat session 
+      add "fold curr tab " "fold other tab" "fold other tab to the right"  , on each tab 's right-click menu
 
 
 
