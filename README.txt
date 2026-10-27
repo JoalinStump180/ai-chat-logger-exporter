@@ -1,75 +1,186 @@
-AI Chat Ask Logger — load unpacked
-----------------------------------
-1. chrome://extensions or edge://extensions
-2. Developer mode on
-3. Load unpacked → select this folder (ai-chat-logger)
+AI Chat Logger  
 
-What it does
-------------
-Content script on ChatGPT, Gemini, Grok:
-  - overlay timestamp on each user ask
-  - Ctrl+Up / Ctrl+Down recall (extension IndexedDB)
-  - on send, logs the ask to the extension background
+1. What this extension does
 
-Explorer (popup → Open explorer):
-  - same layout as Visit URL Logger
-  - ONE row per conversation (not per ask)
-  - fold (+) to see asks, same place comments occupied
-  - sidebar: All / ChatGPT / Gemini / Grok
-  - search can include ask text
+AI Chat Logger records AI conversation sessions and messages in its own extension storage. It currently supports:
 
-How a chat is identified
-------------------------
-NOT the per-ask rid= query param (that changes every send).
-Uses the stable path id and strips rid:
+ChatGPT
 
-  ChatGPT  /c/<id>
-  Gemini   /app/<id>
-  Grok     /c/<id> or /chat/<id>
+Google Gemini
 
-Merge key = platform + conversationId.
-Same thread, many asks → one row + many ask children.
+Grok
 
-Storage
--------
-Extension origin IndexedDB: aiChatAskLog
-  records  = chats
-  asks     = individual prompts
+Custom websites, through configurable site-matching rules
 
-This is NOT the Tampermonkey page-origin DB, and NOT visitCommentLog.
-Disable the userscript on these sites if both run, or you will double-stamp.
+It provides timestamp overlays, prompt history, conversation browsing, searching, manual synchronization, editing, and data import/export.
 
-Settings (popup)
-----------------
-  Show ask-bubble timestamp stick-text  — hide/show on-page stamps
-  Log each ask (prompt text)            — when off, still logs session
-                                          date/time, title, URL/chat id,
-                                          and account name/email
+2. Install and open
 
-Account prefix
---------------
-Best-effort detect signed-in name and/or email on ChatGPT / Gemini / Grok
-and prefix the session title:  [Name / email] Chat title
+Extract the ZIP into a folder.
 
-Per-chat isolation
-------------------
-Ask-bubble timestamps and Ctrl+Up/Down history are scoped to the current
-conversation id (not all chats on the platform). Switching threads clears
-stamps and reloads that chat's own history.
+Open edge://extensions or chrome://extensions.
 
-First ask before the session id exists
---------------------------------------
-A new chat has no id in the URL at send time. That ask is held in the tab
-until the create response or the URL yields an id, then written on the real
-session. If neither appears within 20s, it is stored under pending:<nonce>
-and moved onto the real session when that chat is opened.
+Enable Developer mode.
 
-Title / auto-rename without another ask
-----------------------------------------
-A committed rename, including Grok's auto-rename, updates the same row.
-Shorter names replace longer ones. A generic tab title does not overwrite
-a real name. Title-only sync does not add an ask and does not move the
-row's ask time.
+Choose Load unpacked and select the extracted extension folder.
+
+Open an AI website. If you installed or reloaded the extension, reload the website tab as well.
+
+Click the extension icon to open its popup. Choose Open explorer to browse saved conversations.
+
+3. Popup settings
+
+Setting
+
+Function
+
+Show ask-bubble timestamp stick-text
+
+Show or hide timestamp overlays on user prompts
+
+Log each ask (prompt text)
+
+Save prompt text; when disabled, session metadata is still recorded
+
+Auto-log seen ask bubbles
+
+Attempt to capture user-message bubbles discovered on the page
+
+Auto-log seen answer bubbles
+
+Attempt to capture answer bubbles discovered on the page
+
+Show seen-route debug box
+
+Show or hide the on-page debugging display
+
+Sync
+
+Open the manual synchronization window for the active AI tab
+
+The extension also provides a recent-chat list.
+
+Manual sync
+
+Open ChatGPT or Grok and keep that tab available.
+
+Open the extension popup.
+
+Enter a range such as 1:10 and click Sync.
+
+Select which conversations' asks and answers to import.
+
+Click Log selected.
+
+The Overwrite ask# / ans# text for the same uid option allows existing matching records' text to be overwritten. Manual sync is separate from ordinary live logging.
+
+4. Explorer: browse conversations
+
+The Explorer displays conversations as rows, rather than creating a separate top-level row for every prompt.
+
+Expand/collapse a conversation: show or hide its message records.
+
+Answers: use the answer controls to expand or collapse imported answers.
+
+Edit: change a saved conversation title.
+
+Lock: prevent later platform title synchronization from replacing that conversation's title.
+
+Lock All Chat Titles: lock all saved conversation titles. The button changes to Unlock All Chat Titles when all are locked.
+
+Refresh: reload saved data into the Explorer.
+
+Delete: delete the selected conversation and its associated records. Use this carefully.
+
+The left sidebar provides filters for All chats, ChatGPT, Gemini, Grok, favorites, and recycle.
+
+Individual message controls also provide actions such as editing text, marking items as favorites, and moving items to the recycle area.
+
+5. Search and display controls
+
+Enter search terms in the top search box.
+
+Or: match when any search term is present.
+
+And: require all search terms.
+
+Raw literal: treat the entire search box as one literal, case-insensitive string.
+
+Fst / Lst: restrict message-text searching to the first or last specified lines.
+
+MinL / MaxL: restrict results by message line count.
+
+Fold lines: choose how many beginning and ending lines remain visible in long messages.
+
+Invalidate lower pane: hide the lower hit-results pane during searching.
+
+Search terms can match message text, and the Explorer can display matching lines with highlights.
+
+Additional navigation controls include Prev hit, Next hit, Prev item, and Next item.
+
+The date-time filters restrict results to a chosen date range. Calendar controls and previously used date/search values help with repeated searches.
+
+The ptt / flat selector changes the message display layout. The live-ask sorting control changes the ordering of live asks.
+
+Message-source filters
+
+The five source checkboxes control which kinds of records are displayed:
+
+Filter
+
+Meaning
+
+onMsg
+
+Live-captured asks and legacy/unclassified records
+
+sei
+
+Automatically observed asks
+
+seo
+
+Automatically observed answers
+
+ask
+
+Manually synchronized/imported asks
+
+ans
+
+Manually synchronized/imported answers
+
+These filters are initially off in the Explorer. A record hidden by a source filter is not necessarily missing from storage.
+
+6. Import and export
+
+Export / Import: back up or restore conversation data through JSON.
+
+Export Side Pane / Import Side Pane: back up or replace the custom items in the left sidebar.
+
+Recycle: browse records moved to the recycle area and use the available recovery controls.
+
+The side-pane backup is separate from the normal conversation-data backup.
+
+7. Custom website rules
+
+The left sidebar's Configure function lets you define custom site-matching rules.
+
+Rules can match URLs and optionally specify DOM whitelist or blacklist terms, such as wldiv: and bldiv:. Blacklist rules take precedence over whitelist rules.
+
+This provides a way to configure capture for additional websites without relying exclusively on the built-in AI-site handling.
+
+8. Storage and data cautions
+
+Data is stored in the extension's own IndexedDB database, aiChatAskLog; it is separate from a webpage's own database.
+
+Live capture and manual sync are different mechanisms, so their records and coverage can differ.
+
+Automatic observation depends on finding compatible message elements and identifiers on the page.
+
+If both this extension and another logger are recording the same site, duplicate timestamps or records may result.
+
+Known limitation: the included README flags the DateTime-pane Prev/Next Hit navigation as unfinished. If hit navigation behaves unexpectedly in that view, use the title/session view or search results to locate the conversation.
 
 Usage:
 
