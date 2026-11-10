@@ -1,5 +1,96 @@
 ﻿(function () {
   "use strict";
+  
+      let email = "";
+    let name = "";
+      let convStampList = [];
+  let convStampReady = false;
+  let loadedConv = "";
+  let scheduled = false;
+  
+    const STAMP_CLASS = "ai-ts-stamp";
+  let settings = { showStamps: true, logAsks: true, logSeenAsks: true, logSeenAnswers: true, showSeenDebug: true };
+  
+  // --------------------------------------------------
+  // v1.5 state (no text polling)
+  // --------------------------------------------------
+  //let lastActiveComposer = null;
+  //let lastComposerText = "";
+  //let mousedownText = "";          // filled on mousedown, used by Send
+
+  chrome.storage.local.get(["showStamps", "logAsks", "logSeenAsks", "logSeenAnswers", "showSeenDebug"], (bag) => {
+    settings.showStamps = bag.showStamps !== false;
+    settings.logAsks = bag.logAsks !== false;
+    settings.logSeenAsks = bag.logSeenAsks !== false;
+    settings.logSeenAnswers = bag.logSeenAnswers !== false;
+    settings.showSeenDebug = bag.showSeenDebug !== false;
+    if (!settings.showStamps) clearAllStamps();
+    schedule();
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes.showStamps) {
+      settings.showStamps = changes.showStamps.newValue !== false;
+      if (!settings.showStamps) clearAllStamps();
+      else { loadedConv = ""; schedule(); }
+    }
+    if (changes.logAsks) settings.logAsks = changes.logAsks.newValue !== false;
+    if (changes.logSeenAsks) settings.logSeenAsks = changes.logSeenAsks.newValue !== false;
+    if (changes.logSeenAnswers) settings.logSeenAnswers = changes.logSeenAnswers.newValue !== false;
+    if (changes.showSeenDebug) settings.showSeenDebug = changes.showSeenDebug.newValue !== false;
+  });
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === "settings-changed") {
+      if (typeof msg.showStamps === "boolean") {
+        settings.showStamps = msg.showStamps;
+        if (!settings.showStamps) clearAllStamps();
+        else { loadedConv = ""; schedule(); }
+      }
+      if (typeof msg.logAsks === "boolean") settings.logAsks = msg.logAsks;
+      if (typeof msg.logSeenAsks === "boolean") settings.logSeenAsks = msg.logSeenAsks;
+      if (typeof msg.logSeenAnswers === "boolean") settings.logSeenAnswers = msg.logSeenAnswers;
+      if (typeof msg.showSeenDebug === "boolean") settings.showSeenDebug = msg.showSeenDebug;
+    }
+  });
+
+  const style = document.createElement("style");
+  style.textContent = `
+    #ai-ts-layer {
+      position: fixed !important; inset: 0;
+      pointer-events: none !important; z-index: 2147483000 !important;
+    }
+    .${STAMP_CLASS} {
+      position: absolute !important;
+      font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+      color: #e8e8e8 !important;
+      background: rgba(0,0,0,.42) !important;
+      padding: 1px 5px !important;
+      border-radius: 4px !important;
+      white-space: nowrap !important;
+      pointer-events: none !important;
+    }
+    .${STAMP_CLASS} .ai-ts-date::after { content: "  "; }
+  `;
+  (document.head || document.documentElement).appendChild(style);
+  
+  
+  
+  
+    let host = location.hostname;
+  let platform =
+  
+    host.includes("gemini") ? "gemini" :
+    host.includes("grok") || host === "x.com" ? "grok" :
+    (host.includes("chatgpt") || host.includes("openai")) ? "chatgpt" :
+    //(host.includes("notebook") || host.includes("notebook")) ? "notebook" :
+    null;
+    let hit;
+    
+    
+  
+    const seenLogged = new Set();
+  const seenLast = new Map();
+  let seenLastScan = -1;
 let lastActiveComposer = null;
   let lastComposerText = "";
   let mousedownText = "";          // filled on mousedown, used by Send
@@ -76,24 +167,25 @@ if (0)  document.addEventListener("paste", (e) => {
 });
   // ---why u do not do it like this   ?
 
-  const host = location.hostname;
-  const platform =
-    host.includes("gemini") ? "gemini" :
-    host.includes("grok") || host === "x.com" ? "grok" :
-    (host.includes("chatgpt") || host.includes("openai")) ? "chatgpt" :
-    //(host.includes("notebook") || host.includes("notebook")) ? "notebook" :
-    null;
 
-   if (!platform) {
+    
+    
+    
+    
+ 
+    
+    
+//if (!platform)
+   if (1) {
     chrome.storage.local.get("sideRoutes", (bag) => {
       const rules = Array.isArray(bag.sideRoutes) ? bag.sideRoutes : [];
       const findRouteHit = (routeRules) => routeRules.find((item) => String(item.text || "").split(/\r?\n/).some((line) => {
         const m = line.trim().match(/^onMsg:(\S+)/i);
         return m && location.href.startsWith(m[1]);
       }));
-      let hit = findRouteHit(rules);
+       hit = findRouteHit(rules);
       if (!hit) return;
-
+        platform = hit.id;
       // Optional per-route ancestor filters:
       //   wldiv:token, div.classPart, div#idPart
       //   bldiv:token, div.classPart, div#idPart
@@ -218,6 +310,7 @@ function ancestorTermMatches_new(el, rawTerm) {
       document.addEventListener("keydown",   (e) => {
         if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
         if (!hit) return;
+        platform = hit.id;
         const target = e.target;
         const el = target instanceof HTMLElement && isEditable(target) && isVisible(target)
           ? target
@@ -244,11 +337,28 @@ function ancestorTermMatches_new(el, rawTerm) {
        
         if (!text) return;
         const u = new URL(location.href);
+        const convId = getConversationId();
+        //alert ( "content.js:   "+ "platform:"+hit.id+"convId:   "+convId+"url:   "+u.origin + u.pathname + u.search+"    text:    "+text);
+        console.log ( "content.js:  enterpath "+ "platform:"+hit.id+"convId:   "+convId+"url:   "+u.origin + u.pathname + u.search+"    text:    "+text);
+     
         u.hash = "";
-        chrome.runtime.sendMessage({
+        
+        console.log( "calling logask() in enter path, text is : "    + text+'     logask enter',"enter");
+        logAsk(text+'     logask enter',"enter");
+        console.log( `ORG enter path will be:   platform ${hit.id}  conversationId: ${convId||u.pathname},  
+                  url: ${u.origin + u.pathname + u.search},
+           text: ${text+'     other plat'},
+        
+        
+        `
+        );
+        
+        
+        
+        if (0) chrome.runtime.sendMessage({
           type: "log-ask",
           platform: hit.id,
-          conversationId: u.pathname + u.search,
+          conversationId: convId||u.pathname,
           url: u.origin + u.pathname + u.search,
           title: document.title,
           text: text+'     other plat',
@@ -334,14 +444,15 @@ function ancestorTermMatches_new(el, rawTerm) {
   const liveText = liveComposer
     ? getComposerText(liveComposer)
     : "";
-
-  const text = liveText || mousedownText || lastComposerText;
+// for claude.ai site , liveText is just an "\n", so i just use mousedownText || lastComposerText instead .
+  //const text =  liveText||mousedownText || lastComposerText;
+  const text =  mousedownText || lastComposerText;
   
 
 
 if (bag.flag2) {
   alert(
-    "\nliveText is: " + (liveText || "").split("\n")[0] +
+    "\nliveText is:" + ('prefix'+liveText+'postfix') +
     "\nmousedownText is: " + (mousedownText || "").split("\n")[0] +
     "\nlastComposerText is: " + (lastComposerText || "").split("\n")[0]+
     
@@ -358,11 +469,13 @@ if (bag.flag2) {
          
          
           const u = new URL(location.href);
+           const convId = getConversationId();
+              console.log ( "content.js:  op click path "+ "platform:"+hit.id+"convId:   "+convId+"url:   "+u.origin + u.pathname + u.search+"    text:    "+text);
         u.hash = "";
         chrome.runtime.sendMessage({
           type: "log-ask",
           platform: hit.id,
-          conversationId: u.pathname + u.search,
+          conversationId: convId||u.pathname,
           url: u.origin + u.pathname + u.search,
           title: document.title,
           text: text+'     op click path',
@@ -397,77 +510,284 @@ if (bag.flag2) {
       
       
     });
-    return;
+    
   }   //---if (!platform)
-
-
-
-
-
-  const STAMP_CLASS = "ai-ts-stamp";
-  let settings = { showStamps: true, logAsks: true, logSeenAsks: true, logSeenAnswers: true, showSeenDebug: true };
-
+// --------------------------------------------------
+  // Manual sync: list / fetch sessions (restored from 0.3.7)
   // --------------------------------------------------
-  // v1.5 state (no text polling)
-  // --------------------------------------------------
-  //let lastActiveComposer = null;
-  //let lastComposerText = "";
-  //let mousedownText = "";          // filled on mousedown, used by Send
+  function grokRoleOf(sender) {
+    const s = String(sender || "").toLowerCase();
+    if (s === "human" || s === "user") return "user";
+    if (s === "assistant" || s === "bot" || s === "grok") return "assistant";
+    return s || "unknown";
+  }
 
-  chrome.storage.local.get(["showStamps", "logAsks", "logSeenAsks", "logSeenAnswers", "showSeenDebug"], (bag) => {
-    settings.showStamps = bag.showStamps !== false;
-    settings.logAsks = bag.logAsks !== false;
-    settings.logSeenAsks = bag.logSeenAsks !== false;
-    settings.logSeenAnswers = bag.logSeenAnswers !== false;
-    settings.showSeenDebug = bag.showSeenDebug !== false;
-    if (!settings.showStamps) clearAllStamps();
-    schedule();
-  });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local") return;
-    if (changes.showStamps) {
-      settings.showStamps = changes.showStamps.newValue !== false;
-      if (!settings.showStamps) clearAllStamps();
-      else { loadedConv = ""; schedule(); }
-    }
-    if (changes.logAsks) settings.logAsks = changes.logAsks.newValue !== false;
-    if (changes.logSeenAsks) settings.logSeenAsks = changes.logSeenAsks.newValue !== false;
-    if (changes.logSeenAnswers) settings.logSeenAnswers = changes.logSeenAnswers.newValue !== false;
-    if (changes.showSeenDebug) settings.showSeenDebug = changes.showSeenDebug.newValue !== false;
-  });
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.type === "settings-changed") {
-      if (typeof msg.showStamps === "boolean") {
-        settings.showStamps = msg.showStamps;
-        if (!settings.showStamps) clearAllStamps();
-        else { loadedConv = ""; schedule(); }
+  async function listGrokSessions(limit) {
+    const out = [];
+    let pageToken;
+    while (out.length < limit) {
+      const url = new URL("https://grok.com/rest/app-chat/conversations");
+      url.searchParams.set("pageSize", String(Math.min(30, limit - out.length)));
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
+      if (!res.ok) throw new Error("grok list " + res.status);
+      const data = await res.json();
+      for (const c of data.conversations || []) {
+        if (!c.conversationId) continue;
+        out.push({
+          id: c.conversationId,
+          title: c.title || "(untitled)",
+          createdAt: c.createTime || "",
+          updatedAt: c.modifyTime || "",
+          url: "https://grok.com/c/" + c.conversationId
+        });
+        if (out.length >= limit) break;
       }
-      if (typeof msg.logAsks === "boolean") settings.logAsks = msg.logAsks;
-      if (typeof msg.logSeenAsks === "boolean") settings.logSeenAsks = msg.logSeenAsks;
-      if (typeof msg.logSeenAnswers === "boolean") settings.logSeenAnswers = msg.logSeenAnswers;
-      if (typeof msg.showSeenDebug === "boolean") settings.showSeenDebug = msg.showSeenDebug;
+      pageToken = data.nextPageToken || undefined;
+      if (!pageToken) break;
+    }
+    return out;
+  }
+
+  async function fetchGrokTurns(id) {
+    const enc = encodeURIComponent(id);
+    const opt = { credentials: "include", headers: { accept: "application/json" } };
+    const detailRes = await fetch("https://grok.com/rest/app-chat/conversations_v2/" + enc, opt);
+    if (!detailRes.ok) throw new Error("conversations_v2 " + detailRes.status);
+    const detail = await detailRes.json();
+    const nodeRes = await fetch("https://grok.com/rest/app-chat/conversations/" + enc + "/response-node", opt);
+    if (!nodeRes.ok) throw new Error("response-node " + nodeRes.status);
+    const nodes = ((await nodeRes.json()).responseNodes || []);
+    const responseIds = [...new Set(nodes.map((n) => n.responseId).filter(Boolean))];
+    const loadRes = await fetch("https://grok.com/rest/app-chat/conversations/" + enc + "/load-responses", {
+      method: "POST",
+      credentials: "include",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ responseIds })
+    });
+    if (!loadRes.ok) throw new Error("load-responses " + loadRes.status);
+    const loaded = await loadRes.json();
+    const byId = new Map((loaded.responses || []).map((r) => [r.responseId, r]));
+    const turns = [];
+    for (const rid of responseIds) {
+      const r = byId.get(rid);
+      if (!r) continue;
+      const text = String(r.message || "").trim();
+      if (!text) continue;
+      const created = r.createTime ? Date.parse(r.createTime) : Date.now();
+      turns.push({
+        role: grokRoleOf(r.sender),
+        text,
+        responseId: rid,
+        ts: Number.isFinite(created) ? created : Date.now()
+      });
+    }
+    const conv = detail.conversation || detail || {};
+    return {
+      title: conv.title || document.title,
+      url: "https://grok.com/c/" + id,
+      turns
+    };
+  }
+
+  async function listChatGPTSessions(limit) {
+    const sess = await fetch("https://chatgpt.com/api/auth/session", {
+      credentials: "include",
+      headers: { accept: "application/json" }
+    }).then((r) => r.json());
+    const token = sess && sess.accessToken;
+    if (!token) throw new Error("chatgpt no session token");
+    const out = [];
+    let offset = 0;
+    while (out.length < limit) {
+      const url = new URL("https://chatgpt.com/backend-api/conversations");
+      url.searchParams.set("offset", String(offset));
+      url.searchParams.set("limit", String(Math.min(28, limit - out.length)));
+      url.searchParams.set("order", "updated");
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: { accept: "application/json", authorization: "Bearer " + token }
+      });
+      if (!res.ok) throw new Error("chatgpt list " + res.status);
+      const data = await res.json();
+      const items = data.items || [];
+      for (const it of items) {
+        if (!it.id) continue;
+        out.push({
+          id: it.id,
+          title: it.title || "(untitled)",
+          createdAt: it.create_time || "",
+          updatedAt: it.update_time || "",
+          url: "https://chatgpt.com/c/" + it.id
+        });
+        if (out.length >= limit) break;
+      }
+      if (!items.length) break;
+      offset += items.length;
+    }
+    return { token, out };
+  }
+
+  function chatgptMessageText(msg) {
+    const content = msg && msg.content;
+    if (!content) return "";
+    if (typeof content === "string") return content;
+    const parts = content.parts || [];
+    return parts.map((p) => (typeof p === "string" ? p : (p && p.text) || "")).join("\n");
+  }
+
+  async function fetchChatGPTTurns(id, token) {
+    const res = await fetch("https://chatgpt.com/backend-api/conversation/" + encodeURIComponent(id), {
+      credentials: "include",
+      headers: { accept: "application/json", authorization: "Bearer " + token }
+    });
+    if (!res.ok) throw new Error("chatgpt conversation " + res.status);
+    const data = await res.json();
+    const mapping = data.mapping || {};
+    const turns = [];
+    const nodes = Object.values(mapping);
+    nodes.sort((a, b) => {
+      const ta = (a.message && a.message.create_time) || 0;
+      const tb = (b.message && b.message.create_time) || 0;
+      return ta - tb;
+    });
+    for (const node of nodes) {
+      const msg = node && node.message;
+      if (!msg) continue;
+      const role = msg.author && msg.author.role;
+      if (role !== "user" && role !== "assistant") continue;
+      const text = chatgptMessageText(msg).trim();
+      if (!text) continue;
+      turns.push({
+        role,
+        text,
+        responseId: msg.id || node.id || "",
+        ts: msg.create_time ? Math.round(msg.create_time * 1000) : Date.now()
+      });
+    }
+    return { title: data.title || document.title, url: "https://chatgpt.com/c/" + id, turns };
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+    if (!msg || !msg.type) return;
+    if (msg.type === "list-sessions") {
+      (async () => {
+        const to = msg.to || 10;
+        if (platform === "grok") {
+          const rows = await listGrokSessions(to);
+          sendResponse({ ok: true, platform, rows, account: detectAccount() });
+          return;
+        }
+        if (platform === "chatgpt") {
+          const { token, out } = await listChatGPTSessions(to);
+          sendResponse({ ok: true, platform, rows: out, token, account: detectAccount() });
+          return;
+        }
+        sendResponse({ ok: false, error: "manual sync list not implemented for " + platform });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    }
+    if (msg.type === "fetch-session") {
+      (async () => {
+        if (platform === "grok") {
+          const pack = await fetchGrokTurns(msg.id);
+          sendResponse({ ok: true, platform, ...pack });
+          return;
+        }
+        if (platform === "chatgpt") {
+          let token = msg.token;
+          if (!token) {
+            const sess = await fetch("https://chatgpt.com/api/auth/session", { credentials: "include", headers: { accept: "application/json" } }).then((r) => r.json());
+            token = sess && sess.accessToken;
+          }
+          const pack = await fetchChatGPTTurns(msg.id, token);
+          sendResponse({ ok: true, platform, ...pack });
+          return;
+        }
+        sendResponse({ ok: false, error: "fetch-session not implemented for " + platform });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
     }
   });
 
-  const style = document.createElement("style");
-  style.textContent = `
-    #ai-ts-layer {
-      position: fixed !important; inset: 0;
-      pointer-events: none !important; z-index: 2147483000 !important;
+
+
+
+
+
+  //const STAMP_CLASS = "ai-ts-stamp";
+  //let settings = { showStamps: true, logAsks: true, logSeenAsks: true, logSeenAnswers: true, showSeenDebug: true };
+
+
+
+
+
+
+  // --------------------------------------------------
+  // Hold asks until a real conversation id appears (from content-1.3 bindHeld)
+  // --------------------------------------------------
+  let lastSavedText = "";
+  let lastSavedAt = 0;
+  const heldAsks = [];
+  const settledPending = new Set(); // texts committed as pending after 20s; never rebind
+  let knownId = "";
+  let lastSyncedTitle = "";
+  const BIND_MS = 11000;
+
+
+  setInterval(() => {
+     
+    logSeenBubbles();
+  }, 800);
+
+
+
+
+  if (0) window.addEventListener("message", (e) => {
+    if (e.source !== window || !e.data || e.data.source !== "ai-chat-logger") return;
+    const id = e.data.id || getConversationId() || knownId;
+    if (e.data.id && !getConversationId()) bindHeld(e.data.id, e.data.title);
+    else if (e.data.id) knownId = e.data.id;
+    if (e.data.title) syncTitle(id, e.data.title);
+    console.log ("syncTitle(id, e.data.title) called from addEventListener message (), id and e.data.title is : " , id, e.data.title);
+  });
+
+    if (0) window.addEventListener("pagehide", () => {
+    const id = getConversationId();
+    if (id) {
+      bindHeld(id);
+      return;
     }
-    .${STAMP_CLASS} {
-      position: absolute !important;
-      font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
-      color: #e8e8e8 !important;
-      background: rgba(0,0,0,.42) !important;
-      padding: 1px 5px !important;
-      border-radius: 4px !important;
-      white-space: nowrap !important;
-      pointer-events: none !important;
+    for (const ask of heldAsks.splice(0, heldAsks.length)) settlePending(ask);
+  });
+
+  setInterval(() => {
+    const id = getConversationId();
+    if (id && heldAsks.length) bindHeld(id);
+    else if (id && id !== knownId) {
+      knownId = id;
+     // syncTitle(id, document.title);
+      // console.log ("syncTitle(id, document.title); called from setInterval(), id and document.title is : " , id, document.title);
+      
+      
+      // Only still-held asks (under 20s) may move. Timed-out pending stay pending.
     }
-    .${STAMP_CLASS} .ai-ts-date::after { content: "  "; }
-  `;
-  (document.head || document.documentElement).appendChild(style);
+    heldAsks.slice().forEach((ask) => {
+      if (Date.now() - ask.at > BIND_MS && !getConversationId()) {
+        const i = heldAsks.indexOf(ask);
+        if (i >= 0) heldAsks.splice(i, 1);
+        settlePending(ask);
+      }
+    });
+    //logSeenBubbles();
+  }, 800);
+
+
+
+  return;
+
+
+
 
   function pad(n) { return String(n).padStart(2, "0"); }
   function formatStamp(d) {
@@ -484,19 +804,70 @@ if (bag.flag2) {
     return String(text || "").replace(/\n+/g, "\n").trim();
   }
 
-  function getConversationId() {
+
+
+//    const href = location.href;
+
+//    /gemini\.google\.com/i.test(href)
+
+//     /chatgpt\.com|openai\.com/i.test(href)
+
+ //       /grok\.com|x\.com/i.test(href)
+function getConversationId() {
+  const href = location.href;
+  const u = new URL(href);
+  const hostname = (u.hostname || "").toLowerCase();
+
+  // User can add more
+  const specialSites = ["chatgpt.com", "notebook.google.com", "gemini", "grok", "qwen", "claude"];
+  const isSpecial = specialSites.some(tok => hostname.includes(tok));
+
+  // Find the 3rd "/"
+  let count = 0;
+  let start = -1;
+  for (let i = 0; i < href.length; i++) {
+    if (href[i] === "/") {
+      count++;
+      if (count === 3) {
+        start = i + 1;   // start after the 3rd "/"
+        break;
+      }
+    }
+  }
+
+  if (start === -1) {
+    // fewer than 3 slashes
+    return isSpecial ? "" : (u.host || "");
+  }
+
+  // Cut at first "?" or end of string
+  let end = href.indexOf("?", start);
+  if (end === -1) end = href.length;
+
+  const part = href.substring(start, end);
+
+  if (isSpecial) {
+    return part || "";
+  } else {
+    // other sites: same extraction, fallback to host if empty
+    return part || u.host || "";
+  }
+}
+
+  function getConversationId2() {
     const path = location.pathname || "";
     const u = new URL(location.href);
+    const href = location.href;
     u.searchParams.delete("rid");
     u.searchParams.delete("ridx");
     let m;
-    if (platform === "chatgpt") {
+    if (/chatgpt\.com|openai\.com/i.test(href)) {
       m = path.match(/^\/c\/([^/?#]+)/i) || path.match(/^\/g\/[^/]+\/c\/([^/?#]+)/i);
       if (m) return m[1];
-    } else if (platform === "gemini") {
+    } else if (/gemini\.google\.com/i.test(href)) {
       m = path.match(/^\/app\/([^/?#]+)/i) || path.match(/^\/u\/\d+\/app\/([^/?#]+)/i);
       if (m) return m[1];
-    } else if (platform === "grok") {
+    } else if (/grok\.com|x\.com/i.test(href)) {
       m = path.match(/^\/(?:chat|c|conversation)\/([^/?#]+)/i);
       if (m) return m[1];
       m = path.match(/^\/i\/grok\/([^/?#]+)/i);
@@ -504,10 +875,14 @@ if (bag.flag2) {
       m = path.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
       if (m) return m[1];
     }
+    //if (/google\.com/i.test(href)) return u.host
+    
+    
     for (const key of ["chat", "cid", "conversation", "conversationId", "c"]) {
       if (u.searchParams.get(key)) return u.searchParams.get(key);
     }
-    return "";
+    //return "";
+    return u.search? u.host+"search":u.host;
   }
 
   function looksLikeEmail(s) {
@@ -551,8 +926,8 @@ if (bag.flag2) {
       });
     }
 
-    let email = "";
-    let name = "";
+   // let email = "";
+
     for (const c of candidates) {
       const em = c.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       if (em && !email) email = em[0];
@@ -685,9 +1060,6 @@ if (bag.flag2) {
     placeBox(box, hostEl);
   }
 
-  let convStampList = [];
-  let convStampReady = false;
-  let loadedConv = "";
 
   function loadConvAsks(convId) {
     return new Promise((resolve) => {
@@ -903,16 +1275,7 @@ if (bag.flag2) {
 
 
 
-  // --------------------------------------------------
-  // Hold asks until a real conversation id appears (from content-1.3 bindHeld)
-  // --------------------------------------------------
-  let lastSavedText = "";
-  let lastSavedAt = 0;
-  const heldAsks = [];
-  const settledPending = new Set(); // texts committed as pending after 20s; never rebind
-  let knownId = "";
-  let lastSyncedTitle = "";
-  const BIND_MS = 20000;
+
 
   function settlePending(ask) {
     settledPending.add(String(ask.text || "").replace(/\s+/g, " ").trim());
@@ -983,6 +1346,7 @@ if (bag.flag2) {
     for (const ask of batch) postLog(id, ask.text, ask.ts, ask.account, ask.source);
     rebindPending(id, batch.map((ask) => ask.text));
     syncTitle(id, title || document.title);
+    console.log ("syncTitle(id, title || document.title) called from bindHeld (), id and title is : " , id , title);
     loadedConv = "";
   }
 
@@ -990,10 +1354,13 @@ if (bag.flag2) {
   // logAsk (called only from Enter and Send)
   // --------------------------------------------------
   function logAsk(text, source) {
+    console.log ("in logAsk() entrance"  )
     text = normalizeAsk(text);
     if (!text) return;
     const now = Date.now();
-    if (text === lastSavedText && now - lastSavedAt < 800) return;
+    //if (text === lastSavedText && now - lastSavedAt < 800) return;
+    //if (text === lastSavedText && now - lastSavedAt < 0) return;
+    if (text === lastSavedText && now - lastSavedAt < 0) return;
     lastSavedText = text;
     lastSavedAt = now;
     const account = detectAccount();
@@ -1003,6 +1370,7 @@ if (bag.flag2) {
       postLog(id, text, now, account, source);
       return;
     }
+    console.log ("in logAsk()" ,text,  now, account,  now,  source || "unknown")
     heldAsks.push({ text, ts: now, account, at: now, source: source || "unknown" });
   }
 
@@ -1052,7 +1420,7 @@ if (bag.flag2) {
     
      //  const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
      //caution: keep in mind , we can in this listener write :  if we do not use 'await' syntax , we can use either"async (e) or (e)"  ; but if we use "const bag = await chrome.storage.local.get(" in side this listener, 
-     //   then in case in the text input bar there is non empty user input ,  the below clause "getComposerText(findComposer()"  will return just an empty string, only the mousedownText will not be empty ---or u solve that by first save that result in a buffer ,and then use "const bag = await chrome.storage.local.get(" in side this listener, and then 'alert (buffer)'
+     //   then in case in the text input bar there is non empty user input ,  the  clause below the   "const bag = await chrome.storage.local.get",   say  , "getComposerText(findComposer()"  will return just an empty string due to the async operation, only the mousedownText will not be empty ---or u solve that by first save that result in a buffer ,and then use "const bag = await chrome.storage.local.get(" in side this listener, and then 'alert (buffer)'
      
      
      
@@ -1079,7 +1447,7 @@ if (bag.flag2) {
   // --------------------------------------------------
   // Restored from v0.3.7: stamps schedule + SEEN_ONLINE (ask/ans) path
   // --------------------------------------------------
-  let scheduled = false;
+  //let scheduled = false;
   function schedule() {
     if (scheduled) return;
     scheduled = true;
@@ -1107,9 +1475,9 @@ if (bag.flag2) {
       .trim();
   }
 
-  const seenLogged = new Set();
-  const seenLast = new Map();
-  let seenLastScan = -1;
+  //const seenLogged = new Set();
+  //const seenLast = new Map();
+  //let seenLastScan = -1;
 
   function bubbleBody(el, role) {
     if (role !== "user") {
@@ -1153,6 +1521,7 @@ if (bag.flag2) {
 
   function firstWalkBubbles() {
     const out = [];
+    const href = location.href;
     const push = (el, role) => {
       const text = bubbleBody(el, role);
       if (!text) return;
@@ -1162,7 +1531,11 @@ if (bag.flag2) {
       document.querySelectorAll(userSel).forEach((el) => push(el, "user"));
       document.querySelectorAll(ansSel).forEach((el) => push(el, "assistant"));
     };
-    if (platform === "grok") {
+    
+    
+    
+    
+    if (/grok\.com|x\.com/i.test(href)) {
       document.querySelectorAll("[data-testid='chat-transcript-scroller'] div[id^='response-']").forEach((wrap) => {
         if (!/^response-[0-9a-f-]{8,}$/i.test(wrap.id || "")) return;
         const uid = wrap.id.slice("response-".length);
@@ -1177,9 +1550,9 @@ if (bag.flag2) {
       });
       // fallback if the scroller structure is missing
       if (!out.length) take('[data-message-author-role="user"]', '[data-message-author-role="assistant"]');
-    } else if (platform === "chatgpt") {
+    } else if (/chatgpt\.com|openai\.com/i.test(href)) {
       take('[data-message-author-role="user"]', '[data-message-author-role="assistant"]');
-    } else if (platform === "gemini") {
+    } else if (/gemini\.google\.com/i.test(href)) {
       document.querySelectorAll("user-query").forEach((el) => {
         const uid = geminiTurnId(el);
         const text = messageText(el);
@@ -1301,239 +1674,6 @@ if (bag.flag2) {
     }
   }
 
-  window.addEventListener("message", (e) => {
-    if (e.source !== window || !e.data || e.data.source !== "ai-chat-logger") return;
-    const id = e.data.id || getConversationId() || knownId;
-    if (e.data.id && !getConversationId()) bindHeld(e.data.id, e.data.title);
-    else if (e.data.id) knownId = e.data.id;
-    if (e.data.title) syncTitle(id, e.data.title);
-  });
-
-  window.addEventListener("pagehide", () => {
-    const id = getConversationId();
-    if (id) {
-      bindHeld(id);
-      return;
-    }
-    for (const ask of heldAsks.splice(0, heldAsks.length)) settlePending(ask);
-  });
-
-  setInterval(() => {
-    const id = getConversationId();
-    if (id && heldAsks.length) bindHeld(id);
-    else if (id && id !== knownId) {
-      knownId = id;
-      syncTitle(id, document.title);
-      // Only still-held asks (under 20s) may move. Timed-out pending stay pending.
-    }
-    heldAsks.slice().forEach((ask) => {
-      if (Date.now() - ask.at > BIND_MS && !getConversationId()) {
-        const i = heldAsks.indexOf(ask);
-        if (i >= 0) heldAsks.splice(i, 1);
-        settlePending(ask);
-      }
-    });
-    logSeenBubbles();
-  }, 800);
-
-
-  // --------------------------------------------------
-  // Manual sync: list / fetch sessions (restored from 0.3.7)
-  // --------------------------------------------------
-  function grokRoleOf(sender) {
-    const s = String(sender || "").toLowerCase();
-    if (s === "human" || s === "user") return "user";
-    if (s === "assistant" || s === "bot" || s === "grok") return "assistant";
-    return s || "unknown";
-  }
-
-  async function listGrokSessions(limit) {
-    const out = [];
-    let pageToken;
-    while (out.length < limit) {
-      const url = new URL("https://grok.com/rest/app-chat/conversations");
-      url.searchParams.set("pageSize", String(Math.min(30, limit - out.length)));
-      if (pageToken) url.searchParams.set("pageToken", pageToken);
-      const res = await fetch(url, { credentials: "include", headers: { accept: "application/json" } });
-      if (!res.ok) throw new Error("grok list " + res.status);
-      const data = await res.json();
-      for (const c of data.conversations || []) {
-        if (!c.conversationId) continue;
-        out.push({
-          id: c.conversationId,
-          title: c.title || "(untitled)",
-          createdAt: c.createTime || "",
-          updatedAt: c.modifyTime || "",
-          url: "https://grok.com/c/" + c.conversationId
-        });
-        if (out.length >= limit) break;
-      }
-      pageToken = data.nextPageToken || undefined;
-      if (!pageToken) break;
-    }
-    return out;
-  }
-
-  async function fetchGrokTurns(id) {
-    const enc = encodeURIComponent(id);
-    const opt = { credentials: "include", headers: { accept: "application/json" } };
-    const detailRes = await fetch("https://grok.com/rest/app-chat/conversations_v2/" + enc, opt);
-    if (!detailRes.ok) throw new Error("conversations_v2 " + detailRes.status);
-    const detail = await detailRes.json();
-    const nodeRes = await fetch("https://grok.com/rest/app-chat/conversations/" + enc + "/response-node", opt);
-    if (!nodeRes.ok) throw new Error("response-node " + nodeRes.status);
-    const nodes = ((await nodeRes.json()).responseNodes || []);
-    const responseIds = [...new Set(nodes.map((n) => n.responseId).filter(Boolean))];
-    const loadRes = await fetch("https://grok.com/rest/app-chat/conversations/" + enc + "/load-responses", {
-      method: "POST",
-      credentials: "include",
-      headers: { accept: "application/json", "content-type": "application/json" },
-      body: JSON.stringify({ responseIds })
-    });
-    if (!loadRes.ok) throw new Error("load-responses " + loadRes.status);
-    const loaded = await loadRes.json();
-    const byId = new Map((loaded.responses || []).map((r) => [r.responseId, r]));
-    const turns = [];
-    for (const rid of responseIds) {
-      const r = byId.get(rid);
-      if (!r) continue;
-      const text = String(r.message || "").trim();
-      if (!text) continue;
-      const created = r.createTime ? Date.parse(r.createTime) : Date.now();
-      turns.push({
-        role: grokRoleOf(r.sender),
-        text,
-        responseId: rid,
-        ts: Number.isFinite(created) ? created : Date.now()
-      });
-    }
-    const conv = detail.conversation || detail || {};
-    return {
-      title: conv.title || document.title,
-      url: "https://grok.com/c/" + id,
-      turns
-    };
-  }
-
-  async function listChatGPTSessions(limit) {
-    const sess = await fetch("https://chatgpt.com/api/auth/session", {
-      credentials: "include",
-      headers: { accept: "application/json" }
-    }).then((r) => r.json());
-    const token = sess && sess.accessToken;
-    if (!token) throw new Error("chatgpt no session token");
-    const out = [];
-    let offset = 0;
-    while (out.length < limit) {
-      const url = new URL("https://chatgpt.com/backend-api/conversations");
-      url.searchParams.set("offset", String(offset));
-      url.searchParams.set("limit", String(Math.min(28, limit - out.length)));
-      url.searchParams.set("order", "updated");
-      const res = await fetch(url, {
-        credentials: "include",
-        headers: { accept: "application/json", authorization: "Bearer " + token }
-      });
-      if (!res.ok) throw new Error("chatgpt list " + res.status);
-      const data = await res.json();
-      const items = data.items || [];
-      for (const it of items) {
-        if (!it.id) continue;
-        out.push({
-          id: it.id,
-          title: it.title || "(untitled)",
-          createdAt: it.create_time || "",
-          updatedAt: it.update_time || "",
-          url: "https://chatgpt.com/c/" + it.id
-        });
-        if (out.length >= limit) break;
-      }
-      if (!items.length) break;
-      offset += items.length;
-    }
-    return { token, out };
-  }
-
-  function chatgptMessageText(msg) {
-    const content = msg && msg.content;
-    if (!content) return "";
-    if (typeof content === "string") return content;
-    const parts = content.parts || [];
-    return parts.map((p) => (typeof p === "string" ? p : (p && p.text) || "")).join("\n");
-  }
-
-  async function fetchChatGPTTurns(id, token) {
-    const res = await fetch("https://chatgpt.com/backend-api/conversation/" + encodeURIComponent(id), {
-      credentials: "include",
-      headers: { accept: "application/json", authorization: "Bearer " + token }
-    });
-    if (!res.ok) throw new Error("chatgpt conversation " + res.status);
-    const data = await res.json();
-    const mapping = data.mapping || {};
-    const turns = [];
-    const nodes = Object.values(mapping);
-    nodes.sort((a, b) => {
-      const ta = (a.message && a.message.create_time) || 0;
-      const tb = (b.message && b.message.create_time) || 0;
-      return ta - tb;
-    });
-    for (const node of nodes) {
-      const msg = node && node.message;
-      if (!msg) continue;
-      const role = msg.author && msg.author.role;
-      if (role !== "user" && role !== "assistant") continue;
-      const text = chatgptMessageText(msg).trim();
-      if (!text) continue;
-      turns.push({
-        role,
-        text,
-        responseId: msg.id || node.id || "",
-        ts: msg.create_time ? Math.round(msg.create_time * 1000) : Date.now()
-      });
-    }
-    return { title: data.title || document.title, url: "https://chatgpt.com/c/" + id, turns };
-  }
-
-  chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
-    if (!msg || !msg.type) return;
-    if (msg.type === "list-sessions") {
-      (async () => {
-        const to = msg.to || 10;
-        if (platform === "grok") {
-          const rows = await listGrokSessions(to);
-          sendResponse({ ok: true, platform, rows, account: detectAccount() });
-          return;
-        }
-        if (platform === "chatgpt") {
-          const { token, out } = await listChatGPTSessions(to);
-          sendResponse({ ok: true, platform, rows: out, token, account: detectAccount() });
-          return;
-        }
-        sendResponse({ ok: false, error: "manual sync list not implemented for " + platform });
-      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
-      return true;
-    }
-    if (msg.type === "fetch-session") {
-      (async () => {
-        if (platform === "grok") {
-          const pack = await fetchGrokTurns(msg.id);
-          sendResponse({ ok: true, platform, ...pack });
-          return;
-        }
-        if (platform === "chatgpt") {
-          let token = msg.token;
-          if (!token) {
-            const sess = await fetch("https://chatgpt.com/api/auth/session", { credentials: "include", headers: { accept: "application/json" } }).then((r) => r.json());
-            token = sess && sess.accessToken;
-          }
-          const pack = await fetchChatGPTTurns(msg.id, token);
-          sendResponse({ ok: true, platform, ...pack });
-          return;
-        }
-        sendResponse({ ok: false, error: "fetch-session not implemented for " + platform });
-      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
-      return true;
-    }
-  });
 
   // Initial attach
   ensureComposerAttached();

@@ -48,6 +48,36 @@ function paint() {
   });
 }
 
+
+function fillPlatformPick() {
+  const sel = $("platformPick");
+  if (!sel) return;
+  const builtins = ["chatgpt", "gemini", "grok", "favorites", "recycle"];
+  chrome.storage.local.get("sideRoutes", function (bag) {
+    const routes = Array.isArray(bag.sideRoutes) ? bag.sideRoutes : [];
+    sel.innerHTML = '<option value="">— pick a bag / route —</option>';
+    builtins.forEach(function (id) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      sel.appendChild(opt);
+    });
+    routes.forEach(function (item) {
+      if (!item || !item.id) return;
+      const opt = document.createElement("option");
+      opt.value = item.id;
+      opt.textContent = (item.name || item.id) + "  (" + item.id + ")";
+      sel.appendChild(opt);
+    });
+  });
+}
+fillPlatformPick();
+if ($("platformPick")) {
+  $("platformPick").addEventListener("change", function () {
+    if (this.value) $("platformBox").value = this.value;
+  });
+}
+
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -102,9 +132,10 @@ $("logBtn").onclick = async () => {
       const pack = await sendTab({ type: "fetch-session", id: s.id, token });
       if (!pack || !pack.ok) throw new Error((pack && pack.error) || "fetch failed");
       setStatus(i, "writing…", "run");
+      const chosen = ($("platformBox") && $("platformBox").value.trim()) || platform;
       const saved = await sendBg({
         type: "import-turns",
-        platform,
+        platform: chosen,
         conversationId: s.id,
         url: pack.url || s.url,
         title: pack.title || s.title,

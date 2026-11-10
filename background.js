@@ -276,6 +276,7 @@ async function upsertConversation(payload) {
       conversationId,
       url: href,
       title: title || text.slice(0, 80) || conversationId,
+      titleLocked: false,
       account: account || "",
       date,
       time,
@@ -290,11 +291,13 @@ async function upsertConversation(payload) {
   } else {
     rec.url = href || rec.url;
     if (account && !rec.account) rec.account = account;
-    if (account && rec.title && !String(rec.title).includes(account)) {
-      rec.title = "[" + account + "] " + rec.title;
+    if (!rec.titleLocked) {
+      if (account && rec.title && !String(rec.title).includes(account)) {
+        rec.title = "[" + account + "] " + rec.title;
+      }
+      if (title && shouldReplaceTitle(rec.title, title, payload.titleSync)) rec.title = title;
+      if (payload.titleSync && title) rec.titleUpdatedAt = ts;
     }
-    if (title && shouldReplaceTitle(rec.title, title, payload.titleSync)) rec.title = title;
-    if (payload.titleSync && title) rec.titleUpdatedAt = ts;
     if (!(payload.titleSync && !text)) rec.updatedAt = ts;
     await putRecord(rec);
   }
@@ -640,6 +643,41 @@ async function setLiked(payload) {
   return { ok: !!updated, updated, liked };
 }
 
+async function setConversationTitle(payload) {
+  const convKey = String(payload.convKey || "");
+  const title = String(payload.title || "").trim();
+  if (!convKey || !title) return { ok: false, error: "missing conversation key or title" };
+  const rec = await findByConvKey(convKey);
+  if (!rec) return { ok: false, error: "conversation not found" };
+  rec.title = title;
+  rec.updatedAt = Date.now();
+  await putRecord(rec);
+  await refreshCache();
+  return { ok: true, convKey, title: rec.title, titleLocked: !!rec.titleLocked };
+}
+
+async function setConversationTitleLock(payload) {
+  const convKey = String(payload.convKey || "");
+  if (!convKey) return { ok: false, error: "missing conversation key" };
+  const rec = await findByConvKey(convKey);
+  if (!rec) return { ok: false, error: "conversation not found" };
+  rec.titleLocked = !!payload.locked;
+  await putRecord(rec);
+  await refreshCache();
+  return { ok: true, convKey, titleLocked: rec.titleLocked };
+}
+
+async function setAllConversationTitleLocks(payload) {
+  const locked = !!payload.locked;
+  const all = await getAllRecords();
+  for (const rec of all) {
+    rec.titleLocked = locked;
+    await putRecord(rec);
+  }
+  await refreshCache();
+  return { ok: true, locked, count: all.length };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "set-liked") {
     setLiked(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
@@ -652,6 +690,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg && msg.type === "sync-title") {
     syncTitle(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    return true;
+  }
+  if (msg && msg.type === "set-conversation-title") {
+    setConversationTitle(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    return true;
+  }
+  if (msg && msg.type === "set-title-lock") {
+    setConversationTitleLock(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    return true;
+  }
+  if (msg && msg.type === "set-all-title-locks") {
+    setAllConversationTitleLocks(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
     return true;
   }
   if (msg && msg.type === "rebind-pending") {

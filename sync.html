@@ -24,6 +24,14 @@
     <b>Manual sync</b>
     <button type="button" id="closeBtn">Close</button>
   </header>
+    <div id="platformBar" style="padding:8px 12px;background:#fff;border-bottom:1px solid #ddd;display:flex;flex-direction:column;gap:4px;">
+    <label style="font-size:12px;color:#444;">Target platform / route
+      <input id="platformBox" type="text" placeholder="chatgpt, gemini, grok, or a route id" style="width:100%;box-sizing:border-box;height:24px;margin-top:2px;" />
+    </label>
+    <select id="platformPick" style="height:24px;">
+      <option value="">— pick a bag / route —</option>
+    </select>
+  </div>
   <div id="meta">Detecting chats on the current tab…</div>
   <div id="rows"></div>
   <footer>

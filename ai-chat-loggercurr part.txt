@@ -1,0 +1,96 @@
+// 1. Hide/show every chat info bar
+titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
+  const ck = String(row.dataset.ck || "");
+  const r = byKey.get(ck);
+  const inBag = r ? chatMatchesBag(r) : false;
+  row.hidden = !inBag;
+});
+
+// 2. Hide/show every detail row (all duplicates included)
+titleBody.querySelectorAll("tr.cmt-row[data-ck]").forEach(function (detail) {
+  const ck = String(detail.dataset.ck || "");
+  const r = byKey.get(ck);
+  const inBag = r ? chatMatchesBag(r) : false;
+  detail.hidden = !inBag;
+});
+
+
+--------------------------
+} else {
+
+
+
+
+  // New query, but do not wipe. Treat it like an incremental update.
+  const allowed = new Set(matched.map(function (r) { return String(r.convKey); }));
+  const present = new Set();
+
+  if (titleBody) {
+    titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
+      const ck = String(row.dataset.ck || "");
+      present.add(ck);
+      const inBag = allowed.has(ck);
+      row.hidden = !inBag;
+      const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+      if (!inBag) {
+        if (detail) detail.hidden = true;
+      } else if (detail) {
+        openChats.add(ck);
+        detail.hidden = false;
+        // optionally: only unhide hit nodes, or leave them and let paintHits handle visibility
+        detail.querySelectorAll(".ptt-node").forEach(function (node) {
+          node.hidden = false;
+          if (node.style.display === "none") node.style.display = "";
+        });
+      }
+    });
+
+    // Create rows/details only for matched chats that are not yet in the DOM
+    matched.slice(0, PAGE).forEach(function (r) {
+      const ck = String(r.convKey);
+      if (present.has(ck)) return;
+      if (parsed.tokens.length) openChats.add(ck);
+      titleBody.insertAdjacentHTML("beforeend", rowHtml(r));
+    });
+  }
+  shown = matched.filter(function (r) { return present.has(String(r.convKey)); }).length;
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+------------------------------
+#thfavPane.on { display: block; }
+
+------------------------------
+
+
+
+
+        // Bag click only: hide other chat bars + details, reveal own. No seek, no rebuild.
+    const titleBody = $("titleView");
+    if (!titleBody) return;
+    const source = filter === "recycle" ? recycleChats : rows;
+    const byKey = new Map(source.map(function (r) { return [String(r.convKey), r]; }));
+    titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
+      const ck = String(row.dataset.ck || "");
+      const r = byKey.get(ck);
+      const inBag = r ? chatMatchesBag(r) : false;
+      row.hidden = !inBag;
+      const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+      if (detail) detail.hidden = !inBag;
+    });
+    
+    applyBagFilter( );
+    //const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+    //if (detail) detail.hidden = !inBag;

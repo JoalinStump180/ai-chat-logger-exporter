@@ -1,139 +1,55 @@
-AI Chat Ask Logger — load unpacked
-----------------------------------
-1. chrome://extensions or edge://extensions
-2. Developer mode on
-3. Load unpacked → select this folder (ai-chat-logger)
+AI Chat Explorer — sidebar Tab 2 settings/tools layout
 
-What it does
-------------
-Content script on ChatGPT, Gemini, Grok:
-  - overlay timestamp on each user ask
-  - Ctrl+Up / Ctrl+Down recall (extension IndexedDB)
-  - on send, logs the ask to the extension background
+Based on the CSS-only side-bag tabs prototype.
 
-Explorer (popup → Open explorer):
-  - same layout as Visit URL Logger
-  - ONE row per conversation (not per ask)
-  - fold (+) to see asks, same place comments occupied
-  - sidebar: All / ChatGPT / Gemini / Grok
-  - search can include ask text
+- Tab 1 (Current) is unchanged and still contains the existing bags.
+- Tab 2 now contains the requested settings and management controls:
+  storage path, line filters, foldM/foldN, source checkboxes, sort selector,
+  title-lock button, delete/export/import, side-pane export/import, display mode,
+  and imported ask/answer fold controls.
+- Existing controls were moved, not cloned. Their original element IDs are
+  preserved so the existing JavaScript listeners continue to target them.
+- The visible labels for controls in Tab 2 use their element IDs.
+- The four navigation buttons now display their existing element IDs:
+  goNextGlobalBtn, goPrevGlobalBtn, goNextNBtn, goPrevMBtn.
+- The lock-all button keeps its ID as its visible text; its current state is
+  conveyed by its title and internal data attribute.
+- Tab switching remains CSS-only. No JavaScript tab-switching logic was added.
 
-How a chat is identified
-------------------------
-NOT the per-ask rid= query param (that changes every send).
-Uses the stable path id and strips rid:
+Files: explorer.html, explorer.js
 
-  ChatGPT  /c/<id>
-  Gemini   /app/<id>
-  Grok     /c/<id> or /chat/<id>
 
-Merge key = platform + conversationId.
-Same thread, many asks → one row + many ask children.
+Additional toolbar layout update:
+- Moved the existing Invalidate lower pane checkbox into sidebar Tab 2.
+- Moved Goto, Go All, Fold all chats, and Refresh onto the From/To calendar row.
+- Moved tokenBar beside the search input in the top toolbar so search keywords share that row.
+- Existing element IDs and JavaScript handlers are preserved; explorer.js is unchanged.
 
-Storage
--------
-Extension origin IndexedDB: aiChatAskLog
-  records  = chats
-  asks     = individual prompts
+Additional PTT node layout toggle:
+- Added `pttSingleLine` checkbox to sidebar Tab 2.
+- When enabled, each PTT node places chat metadata, item metadata, and message text
+  in one inline flow; long content wraps naturally as needed.
+- The setting is persisted in `chrome.storage.local` as `pttSingleLine`.
+- The change is presentation-only; node markup, navigation, selection, and event
+  handlers are unchanged.
 
-This is NOT the Tampermonkey page-origin DB, and NOT visitCommentLog.
-Disable the userscript on these sites if both run, or you will double-stamp.
 
-Settings (popup)
-----------------
-  Show ask-bubble timestamp stick-text  — hide/show on-page stamps
-  Log each ask (prompt text)            — when off, still logs session
-                                          date/time, title, URL/chat id,
-                                          and account name/email
+Additional global PTT chat-info visibility toggle:
+- Added `pttShowChatInfo` checkbox to Tab 2 beside `pttSingleLine`.
+- Checked by default: every PTT node shows chat update time and chat title.
+- Unchecked: chat metadata is hidden globally across all PTT nodes.
+- Independent of `pttSingleLine`; either setting can be changed without affecting the other.
+- Persisted in `chrome.storage.local` as `pttShowChatInfo`.
+- Implemented with a body CSS class only; no PTT node reconstruction or pane redraw.
 
-Account prefix
---------------
-Best-effort detect signed-in name and/or email on ChatGPT / Gemini / Grok
-and prefix the session title:  [Name / email] Chat title
 
-Per-chat isolation
-------------------
-Ask-bubble timestamps and Ctrl+Up/Down history are scoped to the current
-conversation id (not all chats on the platform). Switching threads clears
-stamps and reloads that chat's own history.
-
-First ask before the session id exists
+Additional PT/NT existing-items slider
 --------------------------------------
-A new chat has no id in the URL at send time. That ask is held in the tab
-until the create response or the URL yields an id, then written on the real
-session. If neither appears within 20s, it is stored under pending:<nonce>
-and moved onto the real session when that chat is opened.
-
-Title / auto-rename without another ask
-----------------------------------------
-A committed rename, including Grok's auto-rename, updates the same row.
-Shorter names replace longer ones. A generic tab title does not overwrite
-a real name. Title-only sync does not add an ask and does not move the
-row's ask time.
-
-Usage:
-
-use the  'import side pane' button to import    'ai-chat-logger-side-pane-example.json' ,
-and have a try , 
-
-TODO:  
-1.  in the title pane , when there are too many unfolded and long chat session ,  navigating them need to be :
-     in the empty blank space of the top banner , just above the mode/from/to-calendar line , add an tab-button for each unfolded chat session 
-      add "fold curr tab " "fold other tab" "fold other tab to the right"  , on each tab 's right-click menu
-
-
-
-Known issue/s:
-
-1.0  datetime pane 's prev/next hit feature is not ready --- but I have no time to fix , this is because in the jumpHit() , it is passing h.urlid to renderSlice() , but renderSlice() need is h.id format, not h.urlid format.  
-
-
-1.1'  chatgpt 's webpage is sending "message" too often,  some message ' s 'title' field, is not meaningful , like  "Introduction to GPT-5"  ---and u do not want a title like this . 
-I think a fix for this  ,is to : in content.js :  comment out this line: " if (e.data.title) syncTitle(id, e.data.title);"   , and in  "function logAsk(text, source)" 's  "if (id)"  block , just before the 'return'  clause , add this : "syncTitle(id);"   . This might fix . 
-
-
-
-
-
-
-
-
-
-
-
-
-2.  also explain :why if in case not touching any meta- node , the selectedNid will no be changed ?
-
- 
------- Why selectedNid does not change for an ordinary message hit
-After inspecting the actual control flow in your ZIP, I need to correct one detail from my previous explanation: the code does not automatically change selectedNid for every search hit.
-The decisive difference is this code in renderSlice(true):
-if (selectedId &&
-    !$("dateTimeView").querySelector(
-      '[data-nid="' + CSS.escape(selectedId) + '"]'
-    )) {
-  renderDateTimeWindow(selectedId, true);
-}
-There are two cases.
-Case A — the hit is a metadata hit (meta-...)
-jumpHit() assigns selectedId = h.nid.
-The DateTime pane has no message with that meta-... ID.
-The condition is true, so renderDateTimeWindow(selectedId, true) runs.
-Its target lookup fails, but it still schedules selectItemByNid(nid, ...).
-That function assigns selectedNid = nid before checking whether the DOM element exists.
-Case B — the hit is an ordinary message (ask-..., ans-..., sei-..., seo-..., or onMsg-...)
-jumpHit() assigns selectedId = h.nid.
-If that message is already present in the DateTime pane, the selector finds it.
-The condition in renderSlice(true) is false.
-renderDateTimeWindow() is not called, so its deferred selectItemByNid() call does not occur.
-jumpHit() only applies the temporary ptt-jump visual effect. It never assigns selectedNid itself.
-That is why selectedNid can remain unchanged for an ordinary hit, even though the hit navigation moves to another result.
-One important qualification
-If an ordinary message hit is not currently in the DateTime pane, the condition becomes true and the selection path can run for that hit too. So the actual dividing line is whether the hit's data-nid already exists in the DateTime pane, not simply whether the hit is metadata or a message.
-This is also why your observation is plausible: a metadata hit cannot match a message data-nid, while an ordinary hit often can.
-The key lines to keep in mind are:
-jumpHit() — assigns selectedId, not selectedNid.
-renderSlice(true) — decides whether to rebuild the DateTime window.
-renderDateTimeWindow() — schedules the selection callback when given a nonempty nid.
-selectItemByNid() — changes selectedNid before checking whether a matching DOM element exists.
-These four functions together explain the difference in behavior.
+A second horizontal slider sits immediately below the global sorted-items slider.
+It uses the exact logical range used by the “pt exist” / “nt exist” controls: NIDs
+that are already present in the active middle pane and also occur in the global
+chronological index, ordered by that index. Folded/hidden DOM items remain eligible,
+matching the PT/NT buttons. Dragging updates the position readout; releasing selects,
+reveals, and scrolls to that existing item. The thumb follows selection changes and
+updates when switching between the title and date-time panes. The original global
+slider is retained independently.
