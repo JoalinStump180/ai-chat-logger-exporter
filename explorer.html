@@ -1,424 +1,47 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>AI Chat Explorer</title>
+<title>AI Chat Explorer — choose version</title>
 <style>
-    html, body { height: 100%; margin: 0; }
-    body { font: 13px/1.35 "Segoe UI", Tahoma, sans-serif; background: #f0f0f0; color: #222; display: flex; flex-direction: column; }
-    .toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #f3f3f3; border-bottom: 1px solid #c8c8c8; flex-wrap: wrap; }
-    .qwrap { position: relative; flex: 1 1 300px; min-width: 220px; }
-    .toolbar input[type="search"] { width: 100%; height: 24px; border: 1px solid #adadad; padding: 0 8px; box-sizing: border-box; }
-    .fold-setting { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
-    .line-filter { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
-    .line-filter input { width: 42px; height: 22px; box-sizing: border-box; padding: 0 3px; }
-    .fold-setting input { width: 34px; height: 22px; box-sizing: border-box; padding: 0 3px; }
-    .ptt-label-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; vertical-align: top; margin-right: 2px; }
-    .msg-toggle { color: #8b0000; text-decoration: underline; cursor: pointer; font: 11px/1.3 "Segoe UI", Tahoma, sans-serif; white-space: nowrap; }
-    .msg-content { white-space: pre-wrap; overflow-wrap: anywhere; }
-    /* Title pane: keep logical first-M/last-N folding, then cap visual wrapping too. */
-    #titleView .msg-content[data-foldable="1"][data-expanded="0"] {
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: var(--fold-visual-lines, 7);
-      overflow: hidden;
-    }
-    tbody td .ptt-label-wrap { max-width: 100%; }
-    
-    
-    #sideDelete {
-  display: none !important;
-}
-    
-    
-    #qHist { position: absolute; left: 0; right: 0; top: 24px; z-index: 20; max-height: 220px; overflow: auto; background: #fff; border: 1px solid #adadad; display: none; }
-    #qHist div { padding: 4px 8px; cursor: pointer; }
-    #qHist div:hover { background: #e5f3ff; }
-    .toolbar button, .path, .bar2 button { height: 24px; border: 1px solid #adadad; background: #e1e1e1; padding: 0 10px; font: inherit; }
-    .path { display: flex; align-items: center; background: #fff; min-width: 120px; color: #444; }
-    #tokenBar { display: flex; flex: 1 1 180px; min-width: 120px; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 6px; box-sizing: border-box; background: #fff; border: 1px solid #ddd; min-height: 24px; max-height: 48px; overflow: auto; }
-    .bar2 { display: flex; gap: 6px; align-items: center; padding: 4px 8px; background: #f7f7f7; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
-    .bar2 > button { flex: 0 0 auto; }
-    .twrap { position: relative; display: flex; align-items: center; gap: 4px; }
-    .twrap input[type="text"] { width: 150px; height: 24px; border: 1px solid #adadad; padding: 0 6px; }
-    .thist { position: absolute; left: 36px; top: 26px; z-index: 20; width: 180px; max-height: 220px; overflow: auto; background: #fff; border: 1px solid #adadad; display: none; }
-    .thist div { padding: 4px 8px; cursor: pointer; }
-    .thist div:hover { background: #e5f3ff; }
-    .bar2 .spacer { flex: 1; }
-    .global-nav-slider { display:flex; align-items:center; gap:10px; padding:5px 12px; border-bottom:1px solid #ddd; background:#fafafa; }
-    .global-nav-slider input[type="range"] { flex:1; min-width:160px; width:100%; }
-    .global-nav-slider .range-count { min-width:105px; text-align:right; color:#555; font:12px sans-serif; }
-    .existing-time-nav-slider-wrap { padding:0 12px 5px; border-bottom:1px solid #ddd; background:#f6f8fa; }
-    .existing-time-nav-slider { display:flex; align-items:center; gap:10px; padding:5px 0 2px; }
-    .existing-time-nav-slider input[type="range"] { flex:1; min-width:160px; width:100%; }
-    .existing-time-nav-slider .range-count { min-width:105px; text-align:right; color:#555; font:12px sans-serif; }
-    .existing-time-hit-strip { display:block; width:100%; height:4px; margin:0; padding:0; image-rendering:pixelated; }
-    .split { flex: 1; display: flex; min-height: 0; }
-    .side { background: #fff; border-right: 1px solid #c8c8c8; }
-    /*#sideMenu { position: fixed; z-index: 30; background: #fff; border: 1px solid #adadad; min-width: 140px; }*/
-    .sidebar-container, #sidePane, .side-bag-container {
-  position: relative; /* Acts as the anchor for absolute children */
-}
-    
-    #sideMenu {
-  position: absolute;
-  top: 10px;   /* Distance from the top of the side pane */
-  left: 10px;  /* Distance from the left of the side pane */
-  z-index: 99999;
-  background: #fff;
-  border: 1px solid #ccc;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-  padding: 6px;
-  border-radius: 4px;
-}
-    
-    #sideMenu button { display: block; width: 100%; text-align: left; border: 0; background: #fff; padding: 6px 10px; }
-    #sideMenu button:hover { background: #e5f3ff; }
-    #routeBox { position: fixed; z-index: 31; right: 16px; top: 80px; width: 360px; background: #fff; border: 1px solid #adadad; padding: 8px; }
-    #routeBox textarea { width: 100%; height: 190px; box-sizing: border-box; }
-    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff; }
-    /* CSS-only tabs for the left sidebar / bag panel. */
-    .side { width: 180px; flex: 0 0 180px; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-    .side-tab-input { position: absolute; opacity: 0; pointer-events: none; }
-    .side-tab-switch { display: flex; flex: 0 0 auto; gap: 1px; padding: 5px 4px 0; background: #f3f3f3; border-bottom: 1px solid #c8c8c8; }
-    .side-tab-switch label { flex: 1 1 0; min-width: 0; text-align: center; padding: 5px 2px; border: 1px solid #c8c8c8; border-bottom: 0; background: #e5e5e5; color: #444; cursor: pointer; user-select: none; font-size: 11px; }
-    .side-tab-panels { display: flex; flex: 1; min-height: 0; }
-    .side-tab-panel { display: none; flex: 1; min-height: 0; overflow: auto; background: #fff; padding: 8px 0; }
-    .side-tab-panel [data-filter] { display: block; padding: 6px 12px; cursor: pointer; }
-    .side-tab-panel [data-filter].on { background: #cce8ff; }
-    #sideTab1:checked ~ .side-tab-switch label[for="sideTab1"],
-    #sideTab2:checked ~ .side-tab-switch label[for="sideTab2"],
-    #sideTab3:checked ~ .side-tab-switch label[for="sideTab3"] { background: #fff; color: #111; font-weight: 600; border-top: 2px solid #2676b9; margin-top: -1px; }
-    #sideTab1:checked ~ .side-tab-panels #sidePanel1,
-    #sideTab2:checked ~ .side-tab-panels #sidePanel2,
-    #sideTab3:checked ~ .side-tab-panels #sidePanel3 { display: block; }
-    .side-tab-placeholder { padding: 16px 10px; color: #777; font-size: 12px; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    thead th { text-align: left; font-weight: 600; background: #f5f5f5; border-bottom: 1px solid #d0d0d0; padding: 5px 8px; position: sticky; top: 0; }
-    thead th .grip { float: right; width: 6px; cursor: col-resize; height: 14px; background: #ccc; }
-    tbody td { padding: 4px 8px; border-bottom: 1px solid #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    tbody tr.sel { background: #cce8ff; }
-    .ptt-selected { background: #cce8ff; border-radius: 2px; }
-    tbody tr.banner { background: #f7f9fc; font-weight: 500; }
-    .chat-title-controls { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; vertical-align: middle; font-size: 11px; }
-    .chat-title-edit { height: 18px; padding: 0 4px; font-size: 11px; vertical-align: middle; cursor: pointer; }
-    .chat-title-lock { width: 12px; height: 12px; vertical-align: middle; margin: 0; }
-    .chat-title-lock-label { display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
-    tbody tr.item-row { background: #fff; }
-    tbody tr.item-row td:nth-child(3) { font-family: Consolas, monospace; font-size: 12px; }
-    button.fold, button.ansfold { width: 22px; height: 18px; padding: 0; margin-right: 3px; vertical-align: middle; }
-    button.chat-unfold-all, button.chat-unfold-existing, button.chat-fold { height: 18px; padding: 0 4px; margin-right: 3px; vertical-align: middle; font-size: 10px; line-height: 14px; cursor: pointer; }
-    .hit { padding: 0 1px; border-radius: 2px; }
-    .ptt-tree { margin: 4px 8px 8px 16px; }
-    .ptt-row { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0; }
-    .ptt-tog { width: 18px; height: 18px; flex: 0 0 18px; border: 1px solid #adadad; background: #e1e1e1; font: 12px/16px monospace; padding: 0; cursor: pointer; }
-    .ptt-tog[disabled] { opacity: .3; cursor: default; }
-    .ptt-gap { flex: 0 0 auto; min-width: 16px; height: 16px; margin: 1px 2px 0; padding: 0 3px; border: 1px solid #8a8a8a; background: #fff; color: #333; font: 11px/14px monospace; cursor: pointer; }
-    .ptt-tag { color: #003a8c; white-space: nowrap; font-family: Consolas, monospace; }
-    .global-item-index { display:inline-block; margin-right:4px; color:#666; font:10px/1.2 Consolas,monospace; white-space:nowrap; }
-    .ptt-hit-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #d71920; margin: 6px 0 0; vertical-align: 2px; }
-    .ptt-go-set-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #22a447; margin: 6px 0 0; vertical-align: 2px; }
-    #titleView .ptt-go-set-dot { display: none; }
-    /* Three-line node layout. The toggles and 3-dots menu remain siblings
-       in the original .ptt-row, so their controls and delegated handlers stay intact. */
-    .ptt-txt { color: #222; word-break: break-word; white-space: normal; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-    .ptt-chat-meta { color: #082f70; font-size: 11px; line-height: 1.25; font-weight: 800; }
-    .ptt-item-meta { color: #8b0000; font-size: 11px; line-height: 1.25; font-weight: 800; padding-left: 4ch; white-space: normal; }
-    .ptt-item-meta .ptt-label-wrap { display: inline-flex; flex-direction: row; align-items: baseline; gap: 4px; vertical-align: baseline; }
-    .ptt-item-meta .ptt-tag, .ptt-item-meta .global-item-index { color: #8b0000; font-weight: 800; }
-    .ptt-message-content { color: #222; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8ch; font-size: 13px; line-height: 1.35; font-weight: 400; }
-    .ptt-message-content .msg-content { white-space: pre-wrap; }
-    /* Optional compact PTT layout: chat metadata, item metadata and message
-       text flow inline within each node, wrapping naturally when necessary. */
-    body.ptt-single-line .ptt-txt { display: block; }
-    body.ptt-single-line .ptt-chat-meta,
-    body.ptt-single-line .ptt-item-meta,
-    body.ptt-single-line .ptt-message-content { display: inline; padding-left: 0; margin-right: 7px; }
-    body.ptt-single-line .ptt-chat-meta,
-    body.ptt-single-line .ptt-item-meta { white-space: normal; }
-    /* Global chat-info visibility toggle; independent of the inline layout. */
-    body.ptt-hide-chat-info .ptt-chat-meta { display: none !important; }
-    .ptt-node { margin-bottom: 5px; }
-    .ptt-kids { margin-left: 16px; border-left: 1px dotted #bbb; padding-left: 8px; }
-    .ptt-kids[hidden] { display: none; }
-    .ptt-more { position: relative; flex: 0 0 auto; }
-    .ptt-dots { width: 22px; height: 18px; border: 1px solid #adadad; background: #fff; cursor: pointer; }
-    .ptt-menu { position: absolute; right: 0; top: 18px; z-index: 5; background: #fff; border: 1px solid #ccc; display: flex; flex-direction: column; min-width: 88px; }
-    .ptt-menu[hidden] { display: none; }
-    .ptt-menu button { text-align: left; border: 0; background: #fff; padding: 4px 8px; cursor: pointer; }
-    .ptt-menu button:hover { background: #e8f1ff; }
-    .ptt-editbox { box-sizing: border-box; display: block; width: 100%; min-height: 96px; font: 12px Consolas, monospace; }
-    .ptt-edit-actions { display: flex; flex-direction: row; gap: 6px; margin-top: 4px; }
-    .ptt-jump { outline: 2px solid #06c; }
-    .listwrap { flex: 1; overflow: auto; min-height: 140px; }
-    .main { position: relative; }
-    #thfavPane { display: none; position: absolute; inset: 0; z-index: 6; border-top: 2px solid #8b0000; overflow: auto; background: #fffef8; }
-    !#thfavPane.on { display: block; }
-    #thfavClose { float: right; height: 20px; padding: 0 8px; margin: 2px 4px; cursor: pointer; }
-    #thfavPane table { width: 100%; border-collapse: collapse; }
-    #thfavPane th, #thfavPane td { padding: 3px 6px; border-bottom: 1px solid #eee; text-align: left; }
-    #favMenu { position: fixed; z-index: 100; background: #fff; border: 1px solid #888; box-shadow: 2px 2px 6px rgba(0,0,0,.25); padding: 4px; }
-    #favMenu button { display: block; width: 100%; text-align: left; padding: 4px 10px; border: none; background: none; cursor: pointer; }
-    #favMenu button:hover { background: #e5f3ff; }
-    .unfoldfav { margin-right: 6px; }
-
-    .hsplit { height: 6px; cursor: ns-resize; background: #d0d0d0; flex-shrink: 0; }
-    .hits { height: 200px; min-height: 80px; border-top: 1px solid #c8c8c8; background: #fafafa; display: flex; flex-direction: column; }
-    .hits thead th { position: sticky; top: 0; }
-    .hits .hitwrap { flex: 1; overflow: auto; }
-    /* Title-only cleanup: lower hit-results pane is intentionally disabled. */
-    #hSplit, #hitsPane { display: none !important; }
-    .hits tr.on { background: #cce8ff; }
-    .status { height: 22px; min-height: 22px; box-sizing: border-box; border-top: 1px solid #c8c8c8; background: #f3f3f3; padding: 3px 8px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .status::after { content: "  |  " attr(data-selection-status); }
-    .empty { padding: 24px; color: #777; }
-  
-    /* Tab 2: compact settings/control shelf. Existing controls are moved, not cloned. */
-    .side-settings-panel { padding: 6px !important; box-sizing: border-box; }
-    .side-settings { display: flex; flex-direction: column; align-items: stretch; gap: 5px; min-width: 0; }
-    .side-settings > .path { box-sizing: border-box; min-width: 0; width: 100%; height: auto; min-height: 24px; padding: 4px; white-space: normal; overflow-wrap: anywhere; font-size: 10px; }
-    .side-settings > label { display: flex; align-items: center; gap: 4px; min-width: 0; flex-wrap: wrap; font-size: 11px; }
-    .side-settings > label input[type=number] { width: 54px; max-width: 100%; box-sizing: border-box; }
-    .side-settings > label input[type=checkbox] { flex: 0 0 auto; }
-    .side-settings > label select { min-width: 0; width: 100%; height: 24px; }
-    .side-settings > button { box-sizing: border-box; width: 100%; min-height: 25px; height: auto; padding: 3px 4px; white-space: normal; overflow-wrap: anywhere; font-size: 11px; }
+  body { font: 14px/1.4 "Segoe UI", Tahoma, sans-serif; background: #f4f4f4; color: #222; margin: 40px; }
+  h1 { font-size: 18px; }
+  .card { background: #fff; border: 1px solid #ccc; border-radius: 6px; padding: 16px 20px; margin: 12px 0; max-width: 520px; }
+  .card h2 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0 0 10px; color: #555; font-size: 13px; }
+  a.btn { display: inline-block; padding: 6px 14px; background: #2676b9; color: #fff; text-decoration: none; border-radius: 4px; }
+  a.btn:hover { background: #1a5a8f; }
+  .note { font-size: 12px; color: #777; margin-top: 20px; }
 </style>
-
-
-
-
-
 </head>
 <body>
-<div class="toolbar">
+<h1>AI Chat Explorer</h1>
+<p>Choose which explorer to open:</p>
 
-<div class="qwrap">
-<input autocomplete="off" id="q" list="" placeholder='apple "banana orange" URLID:1,3-7' type="search"/>
-<div id="qHist"></div>
-</div>
-<label title="UTC to Local time offset for ask/ans timestamps">Time Offset (hhhh mm ss):
-  <span style="display:inline-flex;gap:4px;align-items:center;margin-top:2px;">
-    h <input id="offsetH" type="number" value="0" style="width:45px;height:22px;box-sizing:border-box;padding:0 3px;" />
-    m <input id="offsetM" type="number" value="0" style="width:45px;height:22px;box-sizing:border-box;padding:0 3px;" />
-    s <input id="offsetS" type="number" value="0" style="width:45px;height:22px;box-sizing:border-box;padding:0 3px;" />
-  </span>
-</label>
-<div id="tokenBar"></div>
-<button id="clearAllBtn" title="Clear the search box and remove every existing item" type="button">Clear all</button>
-<button id="forceSearch" title="Treat every visible item's first line as a hit, even with an empty search" type="button">Force search</button>
-<span id="seek" style="min-width:160px;color:#555;">Seek 0%</span>
-<label title="Treat the entire search box as one literal, case-insensitive string; quotes and URLID are ordinary characters"><input id="rawSearch" type="checkbox"/> Raw literal</label>
-<label title="All tokens must be present in the target text"><input id="searchAnd" type="checkbox"/> And</label>
-<label title="Any one token is enough"><input checked="" id="searchOr" type="checkbox"/> Or</label>
-
-
-
-
-
-
-
-
-
-
-
-
-<label title="Global chronological item index">Index <input id="globalIndexInput" min="1" placeholder="#" step="1" style="width:78px" type="number"/></label>
-
-
-
-
-
-
-
-
-
+<div class="card">
+  <h2>Explorer 1 — current</h2>
+  <p>The existing implementation (full in-memory load, current seek / renderSlice).</p>
+  <a class="btn" href="explorer1.html">Open Explorer 1</a>
 </div>
 
-<div class="bar2">
-
-<div class="twrap">
-<label>from</label>
-<input autocomplete="off" id="fromBox" placeholder="YYYY-MM-DD" type="text"/>
-<button id="fromCal" title="calendar" type="button">cal</button>
-<button id="fromClr" title="clear from" type="button">x</button>
-<input hidden="" id="fromPicker" type="date"/>
-<div class="thist" id="fromHist"></div>
-</div>
-<div class="twrap">
-<label>to</label>
-<input autocomplete="off" id="toBox" placeholder="YYYY-MM-DD" type="text"/>
-<button id="toCal" title="calendar" type="button">cal</button>
-<button id="toClr" title="clear to" type="button">x</button>
-<input hidden="" id="toPicker" type="date"/>
-<div class="thist" id="toHist"></div>
-</div>
-<button id="globalGotoBtn" title="Jump to the indexed item (nearest available item in datetime pane)">Goto</button>
-<button id="globalGoAllBtn" title="Unfold the target chat session, then jump to the indexed item">Go All</button>
-<button id="foldAllChatsBtn" title="Fold every chat session in the current result" type="button">Fold all chats</button>
-<button id="reloadBtn">Refresh</button>
-<span class="spacer"></span>
-<div style="width: 100%;">
-<button id="prevHit" type="button">Prev hit</button>
-<button id="nextHit" type="button">Next hit</button>
-<button id="prevItem" type="button">Prev item</button>
-<button id="nextItem" type="button">Next item</button>
-<button id="prevExisting" title="Step to the previous created item, even if it is hidden, then unhide and scroll to it" type="button">Prev existing</button>
-<button id="nextExisting" title="Step to the next created item, even if it is hidden, then unhide and scroll to it" type="button">Next existing</button>
-<button id="ptExist" title="Previous existing item in global time order, from the current selection. Does not create items." type="button">pt exist</button>
-<button id="ntExist" title="Next existing item in global time order, from the current selection. Does not create items." type="button">nt exist</button>
-<label title="Global chronological stride n">n
-        <input id="goNextGlobalOffset" min="1" placeholder="n" step="1" style="width:62px" type="number" value="1"/>
-</label>
-<button id="goNextGlobalBtn" title="Go forward n items in the global chronological index" type="button">goNextGlobalBtn</button>
-<label title="Global chronological stride m">m
-        <input id="goPrevGlobalOffset" min="1" placeholder="m" step="1" style="width:62px" type="number" value="1"/>
-</label>
-<button id="goPrevGlobalBtn" title="Go backward m items in the global chronological index" type="button">goPrevGlobalBtn</button>
-<label title="Current-chat stride p">p
-        <input id="goNextOffset" min="1" placeholder="p" step="1" style="width:62px" type="number" value="1"/>
-</label>
-<button id="goNextPBtn" title="Go forward p items within the current chat, including non-matching items" type="button">goNextPBtn</button>
-<label title="Current-chat stride q">q
-        <input id="goPrevOffset" min="1" placeholder="q" step="1" style="width:62px" type="number" value="1"/>
-</label>
-<button id="goPrevQBtn" title="Go backward q items within the current chat, including non-matching items" type="button">goPrevQBtn</button>
-</div>
-</div>
-<div class="global-nav-slider" id="globalNavSliderRow" title="Drag to navigate the global chronological sorted existing-items list; navigation occurs on release">
-  <label for="globalNavSlider">Sorted items</label>
-  <input id="globalNavSlider" type="range" min="1" max="1" value="1" step="1" disabled/>
-  <span class="range-count" id="globalNavSliderCount">0 / 0</span>
-</div>
-<div class="existing-time-nav-slider-wrap" id="existingTimeNavSliderWrap">
-  <div class="existing-time-nav-slider" id="existingTimeNavSliderRow" title="Same sorted existing-items range used by pt exist / nt exist; navigates after a 200 ms pause while dragging, immediately on release">
-    <label for="existingTimeNavSlider">PT / NT existing</label>
-    <input id="existingTimeNavSlider" type="range" min="1" max="1" value="1" step="1" disabled/>
-    <span class="range-count" id="existingTimeNavSliderCount">0 / 0</span>
-  </div>
-  <canvas id="existingTimeHitStrip" class="existing-time-hit-strip" height="4" aria-label="Keyword hit map for PT / NT existing items" title="One source pixel column per existing item: green = keyword hit; amber = no keyword hit; gray = no active keyword search"></canvas>
-</div>
-<div class="split">
-<aside class="side">
-<input checked="" class="side-tab-input" id="sideTab1" name="sideBagTab" type="radio"/>
-<input class="side-tab-input" id="sideTab2" name="sideBagTab" type="radio"/>
-<input class="side-tab-input" id="sideTab3" name="sideBagTab" type="radio"/>
-<div aria-label="Sidebar bag tabs" class="side-tab-switch" role="tablist">
-<label for="sideTab1" role="tab">Current</label>
-<label for="sideTab2" role="tab">Tab 2</label>
-<label for="sideTab3" role="tab">Tab 3</label>
-</div>
-<div class="side-tab-panels">
-<section class="side-tab-panel" id="sidePanel1" role="tabpanel">
-<div class="side-current-items">
-<div class="on" data-filter="all">All chats</div>
-<div data-filter="chatgpt">ChatGPT</div>
-<div data-filter="gemini">Gemini</div>
-<div data-filter="grok">Grok</div>
-<div data-filter="favorites">favorites</div>
-<div data-filter="recycle">recycle</div>
-</div>
-</section>
-<section class="side-tab-panel side-settings-panel" id="sidePanel2" role="tabpanel"><div class="side-settings"><label title="Hide the bottom hit-results pane and skip rendering it during searches"><input id="invalidateLowerPane" type="checkbox"/> Invalidate lower pane</label><label title="Show chat info, node info and message text inline within each PTT node"><input id="pttSingleLine" type="checkbox"/> pttSingleLine</label><label title="Show or hide chat update time and chat title for all PTT nodes"><input id="pttShowChatInfo" type="checkbox" checked/> pttShowChatInfo</label><span class="path">extension:\aiChatAskLog\records</span><label class="line-filter" title="Search message text only within these line ranges">searchFirstN <input aria-label="Search first N lines" id="searchFirstN" min="0" placeholder="—" step="1" type="number"/></label><label class="line-filter" title="Search message text only within these line ranges">searchLastN <input aria-label="Search last N lines" id="searchLastN" min="0" placeholder="—" step="1" type="number"/></label><label class="line-filter" title="Only include message records with at least this many lines">minLines <input aria-label="Minimum message line count" id="minLines" min="0" placeholder="—" step="1" type="number"/></label><label class="line-filter" title="Only include message records with at most this many lines">maxLines <input aria-label="Maximum message line count" id="maxLines" min="0" placeholder="—" step="1" type="number"/></label><label>foldM <input aria-label="First lines to keep" id="foldM" min="0" step="1" type="number" value="3"/></label><label>foldN <input aria-label="Last lines to keep" id="foldN" min="0" step="1" type="number" value="3"/></label><label title="Live typed asks, and old untyped rows"><input id="showOnMsg" type="checkbox"/> showOnMsg <span id="showOnMsgLabel">off</span></label><label title="Seen asks"><input id="showSei" type="checkbox"/> showSei <span id="showSeiLabel">off</span></label><label title="Seen answers"><input id="showSeo" type="checkbox"/> showSeo <span id="showSeoLabel">off</span></label><label title="Manual-sync asks"><input id="showAsk" type="checkbox"/> showAsk <span id="showAskLabel">off</span></label><label title="Manual-sync answers"><input id="showAns" type="checkbox"/> showAns <span id="showAnsLabel">off</span></label><label>liveSort <select id="liveSort">
-<option value="ts-asc">time ↑</option>
-<option value="ts-desc">time ↓</option>
-</select></label><button id="lockAllTitlesBtn" title="Lock every saved conversation title against future platform title updates">lockAllTitlesBtn</button><button id="delBtn">delBtn</button><button id="exportBtn">exportBtn</button><button id="importBtn">importBtn</button><button id="exportSideBtn" title="Export custom items in the left sidebar">exportSideBtn</button><button id="importSideBtn" title="Replace custom left-sidebar items from a JSON backup">importSideBtn</button><input accept="application/json" hidden="" id="fileInput" type="file"/><input accept="application/json,.json" hidden="" id="sideFileInput" type="file"/><label style="display:flex;align-items:center;gap:4px;">dispMode <select id="dispMode" style="height:24px;width:90px;">
-<option selected="" value="ptt">ptt</option>
-<option value="flat">flat</option>
-</select></label><button id="foldAsksBtn" type="button">foldAsksBtn</button><button id="unfoldAsksBtn" type="button">unfoldAsksBtn</button><button id="foldAnsBtn" type="button">foldAnsBtn</button><button id="unfoldAnsBtn" type="button">unfoldAnsBtn</button></div></section>
-<section class="side-tab-panel side-settings-panel" id="sidePanel3" role="tabpanel"><div class="side-settings" id="tab3Toggles"></div></section>
-</div>
-</aside>
-<div hidden="" id="favMenu">
-<button id="favUnfoldAll" type="button">Unfold all fav items</button>
+<div class="card">
+  <h2>Explorer 2 — incremental RowsView</h2>
+  <p>New design: RowsView facade, batch getAll, renderSlice only talks to the facade.</p>
+  <a class="btn" href="explorer2.html">Open Explorer 2</a>
 </div>
 
- 
+<div class="card">
+  <h2>Explorer 3</h2>
+  <p>Reserved.</p>
+  <a class="btn" href="explorer3.html">Open Explorer 3</a>
+</div>
 
-<div hidden="" id="sideMenu">
-<button id="sideAdd" type="button">Add item</button>
-<button id="sideConfig" type="button">Configure</button>
- <button id="sideDelete" type="button">Delete</button> 
- 
-<button id="sideRename" type="button">Rename</button>
+<div class="card">
+  <h2>Explorer 4</h2>
+  <p>Reserved.</p>
+  <a class="btn" href="explorer4.html">Open Explorer 4</a>
 </div>
-<div hidden="" id="routeBox">
-<div id="routeTitle">Configure</div>
-!wldiv:ytd-comments-header-renderer, div.names
-<textarea id="routeText" placeholder="
-onMsg:https://www.youtube.com
-     -----let his bag log url start with https://www.youtube.com
 
-bldiv:ytd-comments-header-renderer, div.names
-     -----bldiv: blacklist editable text bar in div of these names . do not listen and log to the youtube comment section 's enterkey, 
-platfilter:route-xxxx
-     ----add route-xxxx to this bag , 
-chatidfilter:1-7,11-20
-    ----add chat 1-7,11-20 to this bag , 
-    
-    -------there can be multiple onMsg:   bldiv:   platfilter:   chatidfilter: line
---------------------
-prev/next hit button : when the search kw bar is not empty ,jump to prev/next hit , 
-goNextp/q button: made prev next p/q item exsiting in curr chat. 
-goNext/prev global button :made global record prev next m/n item exsiting.
-
---------------------
-help: in each chat infobar:  'ua' - 'unfold all'  ;'ue' - 'unfold exsiting'  ;'ur' - 'unfold range'  ;fold - fold existing items
-
-" title="onMsg: URL matches this route. Optional filters: wldiv:token, div.classPart, div#idPart; bldiv:token, div.classPart, div#idPart. Terms may be comma-separated or repeated on multiple lines. Blacklist overrides whitelist."></textarea>
-<button id="routeSave" type="button">Save</button>
-<button id="routeClose" type="button">Close</button>
-</div>
-<div class="main">
-<!-- Original current-items pane remains unchanged; sidebar tabs are independent. -->
-<div class="listwrap">
-<table>
-<thead>
-<tr>
-<th id="thDateTime" style="width:160px">date-time</th>
-<th style="width:70px">Site</th>
-<th id="thTitle" style="width:600px;cursor:pointer" title="sort by session (current order)">Title <span class="grip" data-col="thTitle"></span></th>
-<th>URL / chat id</th>
-<th style="width:50px">Asks</th>
-<th style="width:50px">ID</th>
-</tr>
-</thead>
-<tbody id="titleView"></tbody>
-</table>
-<div class="empty" hidden="" id="empty">No items match. press pagedown key to list other unlisted chat in this bag \n <br>
-kim:  if an chat 's at least one item is shown -this chat will be excluded when appending new search hit<br>
-right-click in the left pane , to create a new bag , and right-click that bag icon,  'config' option to read the help.
-<br>
- </div>
-</div>
-<div id="thfavPane">
-<table>
-<thead><tr><th colspan="6" style="background:#fff3cd">Favorites (liked items only)<button id="thfavClose" type="button" onclick="document.getElementById('thfavPane').classList.remove('on')">Close</button></th></tr></thead>
-<tbody id="thfavView"></tbody>
-</table>
-</div>
-<div class="hsplit" id="hSplit"></div>
-<div class="hits" id="hitsPane">
-<div class="hitwrap">
-<table>
-<thead>
-<tr>
-<th id="thHitDt" style="width:150px;cursor:pointer" title="sort by datetime">datetime</th>
-<th id="thDelDt" style="width:150px;cursor:pointer" title="sort by delete time">del datetime</th>
-<th style="width:70px">urlid</th>
-<th style="width:140px">node</th>
-<th style="width:50px">line</th>
-<th id="thHitTxt">text <span class="grip" data-col="thHitTxt"></span></th>
-</tr>
-</thead>
-<tbody id="hitBody"></tbody>
-</table>
-</div>
-</div>
-</div>
-</div>
-<div class="status" id="status">0 items</div>
-<script src="db.js"></script>
-<script src="explorer.js"></script>
+<p class="note">Popup still opens this page. Pick a version above.</p>
 </body>
 </html>
