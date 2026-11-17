@@ -1,0 +1,31 @@
+talk only: hi , how to use this approach : if the cap'd image is near some pure black , discard it ?
+
+2:37 PM
+
+## Grok
+
+After `drawImage`, look at the canvas before you save. If the frame is near black, throw it away and do not write the slot.
+
+ **Sample, don¡¯t scan every pixel.** A 1080p frame is large. Read a grid, for example every 16th pixel, or 20 points spread across the frame. Skip a thin border, because YouTube letterboxes some videos.
+
+ JavaScript
+
+```
+`function mostlyBlack(canvas) {  const ctx = canvas.getContext("2d");  const { width: w, height: h } = canvas;  const step = 16;  let dark = 0, n = 0;  for (let y = 8; y < h - 8; y += step) {  for (let x = 8; x < w - 8; x += step) {  const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;  n++;  if (r < 12 && g < 12 && b < 12) dark++;  }  }  return n > 0 && dark / n > 0.95; }`
+```
+
+ **Use it in the capture path.**
+
+  - Draw the frame.
+ - If `mostlyBlack(canvas)` is true, return without `putSnap`. Leave the slot empty so the next poll can try again.
+ - Only then call `toDataURL` and save.
+ 
+ `12` is the near-black cutoff per channel. `0.95` means 95% of the samples must be that dark. A real dark scene usually still has some lighter pixels, so it passes. A blank player frame does not.
+
+ One `getImageData` of the whole canvas, then sampling that array, is faster than one `getImageData` per point. The rule is the same.
+
+
+
+
+
+talk only: how to add the video url id prepend to each file name   ?3:07 PMIn export2Dir, the file path is built here:JavaScriptname: folder + "/slot" + row.slot + ".jpg"id is already the video id for that group. Prepend it to the file, not the folder:JavaScriptname: folder + "/" + id + "-slot" + row.slot + ".jpg"A file then looks like:Some Title__Wm4r28GS3_0__next 80__ / Wm4r28GS3_0-slot1.jpgThe folder name stays as it is. Only the file inside it changes.

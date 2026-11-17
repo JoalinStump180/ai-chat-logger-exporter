@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>AI Chat Explorer — choose version</title>
+<style>
+  body { font: 14px/1.4 "Segoe UI", Tahoma, sans-serif; background: #f4f4f4; color: #222; margin: 40px; }
+  h1 { font-size: 18px; }
+  .card { background: #fff; border: 1px solid #ccc; border-radius: 6px; padding: 16px 20px; margin: 12px 0; max-width: 560px; }
+  .card h2 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0 0 10px; color: #555; font-size: 13px; }
+  a.btn, button.btn { display: inline-block; padding: 6px 14px; background: #2676b9; color: #fff; text-decoration: none; border: 0; border-radius: 4px; cursor: pointer; font: inherit; }
+  a.btn:hover, button.btn:hover { background: #1a5a8f; }
+  label { margin-right: 12px; }
+  input[type="date"], input[type="number"] { font: inherit; padding: 2px 6px; }
+  #rangeStatus { margin-left: 8px; color: #2676b9; font-size: 12px; }
+  .note { font-size: 12px; color: #777; margin-top: 20px; }
+</style>
+</head>
+<body>
+<h1>AI Chat Explorer</h1>
+
+<div class="card">
+  <h2>From / To range</h2>
+  <p>Saved to chrome.storage.local. Explorer 3 reads this before any IndexedDB load.</p>
+  <label>From <input id="fromBox" type="date"></label>
+  <label>To <input id="toBox" type="date"></label>
+  <button id="saveRange" class="btn" type="button">Save range</button>
+  <span id="rangeStatus"></span>
+</div>
+
+<div class="card">
+  <h2>Open by number</h2>
+  <p>Enter an integer N to open explorerN.html (which loads explorerN.js).</p>
+  <label>Explorer
+    <input id="explorerPick" type="number" min="1" max="9" value="3" style="width:4em">
+  </label>
+  <button id="openExplorer" class="btn" type="button">Open</button>
+</div>
+
+<div class="card">
+  <h2>Explorer 1 — current</h2>
+  <p>Existing implementation (full in-memory load).</p>
+  <a class="btn" href="explorer1.html">Open Explorer 1</a>
+</div>
+
+<div class="card">
+  <h2>Explorer 2 — incremental RowsView</h2>
+  <p>RowsView facade, batch getAll.</p>
+  <a class="btn" href="explorer2.html">Open Explorer 2</a>
+</div>
+
+<div class="card">
+  <h2>Explorer 3 — settings first + from/to range</h2>
+  <p>Settings (including from/to) load before any IndexedDB read; loads limited to the calendar range.</p>
+  <a class="btn" href="explorer3.html">Open Explorer 3</a>
+</div>
+
+<div class="card">
+  <h2>Explorer 4</h2>
+  <p>Reserved.</p>
+  <a class="btn" href="explorer4.html">Open Explorer 4</a>
+</div>
+
+<p class="note">Popup opens this page. Set the range, then open an explorer.</p>
+<script src="explorer.js"></script>
+</body>
+</html>

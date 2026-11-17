@@ -1,0 +1,29 @@
+talk only: how in seek() , when appending and rendering search hits , does not skip existing .details , but append item to corresponding .details div  ; and further , if i also want to 1.  keep each data-nid once; or 2. delete exisitng data-nid item dom , add the new item com ...  etc  ---tell me where code part to modify ?5:07 PMThe place is the else if (detail) branch in seek, around line 2311. That is where an existing detail row is currently only unhidden, never appended to.
+2311:2316:explorer1.js      } else if (detail) {
+        openChats.add(ck);
+        detail.hidden = false;
+        detail.querySelectorAll(".ptt-node").forEach(function (node) {
+          node.hidden = false;
+          if (node.style.display === "none") node.style.display = "";
+        });
+Replace that body with an append into the detail's tree. nodeHtmlFor(nid, ck, tokens) builds one item, and insertNidTimestampOrdered places it. So for each hit belonging to this chat:
+JavaScript} else if (detail) {
+  openChats.add(ck);
+  detail.hidden = false;
+  const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+  const hits = hitList.filter(function (h) { return String(h.convKey) === ck; });
+  hits.forEach(function (h) {
+    const nid = String(h.nid);
+    const existing = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+
+    // option 1: keep each data-nid once
+    if (existing) return;
+
+    // option 2: drop the old node, add the fresh one
+    // if (existing) existing.remove();
+
+    insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, parsed.tokens), h.ts || 0);
+  });
+}
+Pick one of the two lines. Option 1 skips a nid already in the detail, so each nid appears once. Option 2 removes the old DOM node first, then inserts the newly built one, which refreshes its content.
+The branch just below, else if (parsed.tokens.length), is the no-detail case. It already builds the whole detail with askBlock, so leave it. The change is only in the branch where detail already exists

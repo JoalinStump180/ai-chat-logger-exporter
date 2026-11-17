@@ -1,0 +1,13 @@
+input.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  let base = Date.parse((input.value || "").trim().replace(" ", "T"));
+  if (!Number.isFinite(base)) base = Date.now();
+  const step = e.deltaY > 0 ? -3600000 : 3600000;
+  let next = base + step;
+
+  if (!timeIndex.length) buildGlobalChronologicalIndex();
+  const newest = timeIndex.length ? timeIndex[timeIndex.length - 1].ts : null;
+  if (newest != null && next > newest) next = newest;
+
+  input.value = fmt(next);
+}, { passive: false });

@@ -1,0 +1,38 @@
+talk only:can u let the left pane becomes multi-tab view ,and the 1st tab is just the curr left pane view;and the 2nd tab is the fav pane , and user can use right-click on the empty area of this pane ,to pop a menu 'add item' to  create a 'folder'  that hold arbitary chat session id , and can user can right-click that folder item , pop an rc menu with an option :config , click 'config' will pop a text window , and user can input arbitary integer chat id into that , separated with newline and space, or commas , ,---and in the title pane , user can 'drag' chat info bar , to any folder , and if that folder does not contain that chat 's integer id , add it into its config. 
+
+split the search box to 2 box,  and the search kw is the concat of the 2 box, 
+
+and if user click that folder , it will auto gen the range limiter urlid:1,11,12,14  .... into the 2nd box ,  --in the search algorihtm there is already support for urlid syntax. 
+
+if user ctrl+hovering on the folder item , it will give an hover text box under mouse pointer , with its chat sessions'  datetime site title chat-id ask-count  id 
+
+
+also add an site-url limiter syntax in line with the "urlid:" syntax:   site-url:google,qwen,gpt  ---means that the url must contains google or qwen or gpt , as substring, 
+
+
+
+
+
+
+
+
+
+talk only: add in selectItemByNid , in status bar , display that item 's chat 's last update time , chat title ,and chat_id  ?
+
+
+
+
+talk only:  i think you can build the go p q in curr chat button 's function On the go m n button , 
+and along this process , the iteration in other chat can be also allowed to create the item node it no existing.  
+the difference is , only the step that 'falls in ' curr chat is now considered a counting step.   
+
+
+
+
+
+
+
+
+another approach is to map search kw     composite:        apple|banana ->{  chat_unfoldall: {  chat_id           }           }   ---say  , i am searching using apple and banana , chat_unfoldall is a set in indexDB, that can persistent record all the  chat session that is in 'all unfold' state , ---and let this state be consistent across the 2 panes.
+
+curr approach 's  m n button can be kept for title pane  ; and p q button can be kept for date time pane.  

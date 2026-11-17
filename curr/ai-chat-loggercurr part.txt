@@ -1,0 +1,181 @@
+talk only: how to let the mnpq button , if outofrange , exec to meaningful range ?Yes ¡ª easy. Just clamp instead of aborting.
+Right now both functions give up when the step would leave the valid range:
+JavaScript// p/q (chat-local)
+if (targetPosition < 0 || targetPosition >= chatIndex.nids.length) {
+  $("status").textContent = "Reached the end¡­";
+  return;   // ¡û abort
+}
+
+// m/n (global)
+if (requestedIndex < 1 || requestedIndex > globalNidByIndex.size) {
+  $("status").textContent = "Target index ¡­ is outside¡­";
+  return;   // ¡û abort
+}
+Change to clamp
+p/q (navigateCurrentChatOffsetFromIndex):
+JavaScriptconst len = chatIndex.nids.length;
+let targetPosition = startPosition + direction * step;
+const clamped = targetPosition < 0 || targetPosition >= len;
+targetPosition = Math.max(0, Math.min(len - 1, targetPosition));
+
+if (targetPosition === startPosition) {
+  $("status").textContent = direction > 0
+    ? "Already at the end of the current chat."
+    : "Already at the beginning of the current chat.";
+  return;
+}
+// then continue as normal with the clamped targetPosition
+// (optional) if (clamped) status += " (clamped)";
+m/n (navigateGlobalOffset):
+JavaScriptconst total = globalNidByIndex.size;
+let requestedIndex = currentIndex + offset;
+const clamped = requestedIndex < 1 || requestedIndex > total;
+requestedIndex = Math.max(1, Math.min(total, requestedIndex));
+
+if (requestedIndex === currentIndex) {
+  $("status").textContent = offset > 0
+    ? "Already at the last global item."
+    : "Already at the first global item.";
+  return;
+}
+// then continue as normal with the clamped requestedIndex
+Result
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Step would go¡­BehaviorPast the endJump to the last item (and materialize the interval up to it)Before the startJump to the first itemAlready at the boundaryStay put + short status
+No other changes are required ¡ª the rest of the function (interval materialize, ensure*, select) already works with any valid target index/position.chatIndex.nids.length  ---how to acesss this in console   ?chatIndex is a local variable inside the navigation function, so you can¡¯t reach it directly.
+
+You can rebuild the same object from the console:JavaScript// 1. Get the current chat key from the selected item
+const nid = selectedNid;                          // or pick any nid
+const ck  = findConvForNid(nid) || owningConversationKeyForNid(nid);
+console.log("convKey:", ck);
+
+// 2. Build (or fetch) the chat-local index
+const chatIndex = currentChatChronologicalIndex(ck);
+
+// 3. Now you can read it
+console.log("length:", chatIndex.nids.length);
+console.log("nids:", chatIndex.nids);
+console.log("position of selected:", chatIndex.positionByNid.get(String(nid)));If you already know the convKey:JavaScriptcurrentChatChronologicalIndex("your|convKey").nids.length
+
+
+
+
+-------------------------
+
+
+// 1. Hide/show every chat info bar
+titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
+  const ck = String(row.dataset.ck || "");
+  const r = byKey.get(ck);
+  const inBag = r ? chatMatchesBag(r) : false;
+  row.hidden = !inBag;
+});
+
+// 2. Hide/show every detail row (all duplicates included)
+titleBody.querySelectorAll("tr.cmt-row[data-ck]").forEach(function (detail) {
+  const ck = String(detail.dataset.ck || "");
+  const r = byKey.get(ck);
+  const inBag = r ? chatMatchesBag(r) : false;
+  detail.hidden = !inBag;
+});
+
+
+--------------------------
+} else {
+
+
+
+
+  // New query, but do not wipe. Treat it like an incremental update.
+  const allowed = new Set(matched.map(function (r) { return String(r.convKey); }));
+  const present = new Set();
+
+  if (titleBody) {
+    titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
+      const ck = String(row.dataset.ck || "");
+      present.add(ck);
+      const inBag = allowed.has(ck);
+      row.hidden = !inBag;
+      const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+      if (!inBag) {
+        if (detail) detail.hidden = true;
+      } else if (detail) {
+        openChats.add(ck);
+        detail.hidden = false;
+        // optionally: only unhide hit nodes, or leave them and let paintHits handle visibility
+        detail.querySelectorAll(".ptt-node").forEach(function (node) {
+          node.hidden = false;
+          if (node.style.display === "none") node.style.display = "";
+        });
+      }
+    });
+
+    // Create rows/details only for matched chats that are not yet in the DOM
+    matched.slice(0, PAGE).forEach(function (r) {
+      const ck = String(r.convKey);
+      if (present.has(ck)) return;
+      if (parsed.tokens.length) openChats.add(ck);
+      titleBody.insertAdjacentHTML("beforeend", rowHtml(r));
+    });
+  }
+  shown = matched.filter(function (r) { return present.has(String(r.convKey)); }).length;
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+------------------------------
+#thfavPane.on { display: block; }
+
+------------------------------
+
+
+
+
+        // Bag click only: hide other chat bars + details, reveal own. No seek, no rebuild.
+    const titleBody = $("titleView");
+    if (!titleBody) return;
+    const source = filter === "recycle" ? recycleChats : rows;
+    const byKey = new Map(source.map(function (r) { return [String(r.convKey), r]; }));
+    titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
+      const ck = String(row.dataset.ck || "");
+      const r = byKey.get(ck);
+      const inBag = r ? chatMatchesBag(r) : false;
+      row.hidden = !inBag;
+      const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+      if (detail) detail.hidden = !inBag;
+    });
+    
+    applyBagFilter( );
+    //const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+    //if (detail) detail.hidden = !inBag;
