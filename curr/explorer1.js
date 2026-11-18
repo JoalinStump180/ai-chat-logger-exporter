@@ -2203,6 +2203,38 @@ function applyEditedText(recordKey, kind, text) {
 
 // Refresh only the edited message inside its existing three-line PTT node.
 // Keep chat metadata, item metadata, tree controls, menu and node identity intact.
+
+// Update only the liked star and the 3-dots menu button on an existing node.
+function refreshLikedStateInNode(nodeEl, dotsBtn, liked) {
+  if (!nodeEl || !dotsBtn) return;
+  const menu = dotsBtn.parentElement && dotsBtn.parentElement.querySelector(".ptt-menu");
+  if (menu) {
+    const btn = menu.querySelector(".ptt-like, .ptt-unlike");
+    if (btn) {
+      btn.className = liked ? "ptt-unlike" : "ptt-like";
+      btn.textContent = liked ? "Unlike" : "Like";
+    }
+  }
+  dotsBtn.dataset.liked = liked ? "1" : "0";
+
+  const row = nodeEl.querySelector(":scope > .ptt-row");
+  if (row) {
+    let star = row.querySelector(".ptt-like-mark");
+    if (liked) {
+      if (!star) {
+        star = document.createElement("span");
+        star.className = "ptt-like-mark";
+        star.title = "liked";
+        star.textContent = "\u2605";
+        const meta = row.querySelector(".ptt-item-meta") || row;
+        meta.prepend(star);
+      }
+    } else if (star) {
+      star.remove();
+    }
+  }
+}
+
 function refreshEditedMessageInNode(nodeEl, dotsBtn, text) {
   if (!nodeEl) return;
   const nid = String(nodeEl.dataset.nid || (dotsBtn && dotsBtn.dataset.nid) || "");
@@ -2317,9 +2349,17 @@ function seek(q) {
       } else if (detail) {
         openChats.add(ck);
         detail.hidden = false;
-        detail.querySelectorAll(".ptt-node").forEach(function (node) {
-          node.hidden = false;
-          if (node.style.display === "none") node.style.display = "";
+        const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+        const replace = $("replaceExistingNid") && $("replaceExistingNid").checked;
+        const hits = hitList.filter(function (h) { return String(h.convKey) === ck; });
+        hits.forEach(function (h) {
+          const nid = String(h.nid);
+          const existing = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+          if (existing) {
+            if (!replace) return;          // option 1: keep each data-nid once
+            existing.remove();             // option 2: drop old, add fresh
+          }
+          if (tree) insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, parsed.tokens), h.ts || 0);
         });
       } else if (parsed.tokens.length) {
         // Chat is entering this bag with no detail yet. Create its hits once.
@@ -2773,7 +2813,14 @@ document.addEventListener("click", function (e) {
       const again = findByNid(nid);
       if (again && again.node) again.node.liked = liked;
       if (ck) openChats.add(ck);
-      seek($("q").value);
+      // only refresh this node (and any other rendered copy of the same nid)
+      document.querySelectorAll('[data-nid="' + CSS.escape(nid) + '"]').forEach(function (el) {
+        const btn = el.querySelector(".ptt-dots");
+        refreshLikedStateInNode(el, btn || dotsBtn, liked);
+      });
+      if (!document.querySelector('[data-nid="' + CSS.escape(nid) + '"]')) {
+        refreshLikedStateInNode(nodeEl, dotsBtn, liked);
+      }
       $("status").textContent = err
         ? ("Like not saved: " + err.message)
         : ((liked ? "Liked " : "Unliked ") + nid + (res && res.updated === false ? " (not in DB)" : ""));
