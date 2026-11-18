@@ -558,6 +558,11 @@ function viewAsks(convKey) {
   return (filter === "recycle" ? recycleAsks : asksByConv).get(convKey) || [];
 }
 function nodeLiked(n) { return !!(n && n.liked); }
+// Search in the favorites bag: only liked items become hits / item DOM.
+// Normal fav-bag browsing (empty search) is unchanged.
+function searchInFavOnlyLiked() {
+  return filter === "favorites" && parseSearch($("q").value).tokens.length > 0;
+}
 function findByNid(nid) {
   const id = String(nid || "");
   const kind = (id.startsWith("ans-") || id.startsWith("seo-")) ? "answer" : id.startsWith("onMsg-") ? "onMsg" : "ask";
@@ -1059,6 +1064,7 @@ function askBlock(r, list, tokens) {
     // 1. Collect OnMsg nodes
     if (isOnMsg(c)) {
       if ((showOnMsg || filter === "favorites") && inTime(askTs) && showAsk(c)) {
+        if (searchInFavOnlyLiked() && !nodeLiked(c)) return;
         const nid = "onMsg-" + (c.recordKey || c.localIndex);
         if (!hitMode || searchHitNids.has(nid) || inOpenedGap(nid, r.convKey) || inOpenedOlderHistory(nid, r.convKey)) {
           flatItems.push({
@@ -1087,7 +1093,7 @@ function askBlock(r, list, tokens) {
     }
 
     // 2. Collect Ask / Sei nodes independently (flat)
-    if ((showSei || showAsk || filter === "favorites") && showAsk(c) && showAskNode(c) && inTime(askTs)) {
+    if ((showSei || showAsk || filter === "favorites") && showAsk(c) && showAskNode(c) && inTime(askTs) && !(searchInFavOnlyLiked() && !nodeLiked(c))) {
       const askNid = askNidPrefix(c) + "-" + (c.recordKey || c.localIndex);
       const askHit = searchHitNids.has(askNid);
       const gapAsk = inOpenedGap(askNid, r.convKey);
@@ -1338,7 +1344,8 @@ function applySearchUnfold(r, tokens) {
 
 function collectHits(r, tokens) {
   const list = viewAsks(r.convKey);
-  function add(kind, idLabel, text, ts, isMessage) {
+  function add(kind, idLabel, text, ts, isMessage, likedNode) {
+    if (searchInFavOnlyLiked() && !nodeLiked(likedNode)) return;
     lineHits(text, tokens, !!isMessage).forEach(function (h) {
       hitList.push({
         urlid: r.id,
@@ -1352,16 +1359,16 @@ function collectHits(r, tokens) {
       });
     });
   }
-  if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r));
+  if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r), false, null);
   if (showOnMsg) {
     liveAsks(list).filter((c) => isOnMsg(c) && inTime(c.ts)).forEach(function (c) {
-      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true);
+      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true, c);
     });
   }
   list.filter((c) => !isOnMsg(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
-    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true);
+    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true, c);
     (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a)).forEach(function (a) {
-      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
+      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true, a);
     });
   });
 }
@@ -1380,6 +1387,7 @@ function rowHtml(r) {
   const chatBtns =
     '<button class="chat-unfold-all" data-ck="' + esc(r.convKey) + '" type="button" title="Create and show every item in this chat">ua</button>' +
     '<button class="chat-unfold-existing" data-ck="' + esc(r.convKey) + '" type="button" title="Show items already created for this chat">ue</button>' +
+    '<button class="chat-unfold-fav" data-ck="' + esc(r.convKey) + '" type="button" title="Unfold liked items in this chat">uf</button>' +
     '<button class="chat-unfold-range" data-ck="' + esc(r.convKey) + '" type="button" title="Unfold a range of items (e.g. 9:18,-17:-8)">ur</button>' +
     '<button class="chat-fold" data-ck="' + esc(r.convKey) + '" type="button" title="Hide this chat\'s items">Fold</button>';
   const detail = (tokens.length || forceAll || forceAllActive) && show
@@ -2153,7 +2161,10 @@ function renderSlice(reset) {
   const tb = $("titleView");
   if (reset) { shown = 0; tb.innerHTML = ""; }
   const next = matched.slice(shown, shown + PAGE);
-  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+  if (next.length) {
+    tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+    dirtyflag1 = true;
+  }
   if (0) next.forEach(function (r) {
     const index = matched.indexOf(r);
     if (index >= 0) insertTitleSessionAtSearchPosition(index);
@@ -2354,6 +2365,10 @@ function seek(q) {
         const hits = hitList.filter(function (h) { return String(h.convKey) === ck; });
         hits.forEach(function (h) {
           const nid = String(h.nid);
+          if (searchInFavOnlyLiked()) {
+            const hitNode = findByNid(nid);
+            if (!hitNode || !hitNode.node || !nodeLiked(hitNode.node)) return;
+          }
           const existing = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
           if (existing) {
             if (!replace) return;          // option 1: keep each data-nid once
@@ -2925,6 +2940,54 @@ document.addEventListener("click", function (e) {
     detail.querySelectorAll(".ptt-node").forEach(function (node) {
       node.hidden = false;
       if (node.style.display === "none") node.style.display = "";
+    });
+    return;
+  }
+
+  const unfoldFavBtn = e.target.closest(".chat-unfold-fav");
+  if (unfoldFavBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const ck = String(unfoldFavBtn.dataset.ck || "");
+    if (!ck) return;
+    openChats.add(ck);
+
+    const tokens = parseSearch($("q").value).tokens;
+    const bar = document.querySelector('#titleView tr[data-id][data-ck="' + CSS.escape(ck) + '"]');
+    let detail = document.querySelector('#titleView tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+
+    if (!detail && bar) {
+      const session = matched.find(function (r) { return String(r.convKey) === ck; }) || sessionForConversationKey(ck);
+      if (session) {
+        bar.insertAdjacentHTML("afterend",
+          '<tr class="cmt-row" data-ck="' + esc(ck) + '"><td colspan="6">' +
+          askBlock(session, viewAsks(ck), tokens) + "</td></tr>");
+        detail = bar.nextElementSibling;
+      }
+    }
+    if (!detail) return;
+    detail.hidden = false;
+
+    const likedNids = [];
+    (viewAsks(ck) || []).forEach(function (c) {
+      if (nodeLiked(c)) likedNids.push(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
+      (c.answers || []).forEach(function (a) {
+        if (nodeLiked(a)) likedNids.push(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex));
+      });
+    });
+
+    const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+    likedNids.forEach(function (nid) {
+      let node = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+      if (!node && tree) {
+        const hit = findByNid(nid);
+        insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, tokens), (hit && hit.node && hit.node.ts) || 0);
+        node = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+      }
+      if (node) {
+        node.hidden = false;
+        if (node.style.display === "none") node.style.display = "";
+      }
     });
     return;
   }
