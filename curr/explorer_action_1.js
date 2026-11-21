@@ -216,7 +216,11 @@ async function restoreUiState() {
   }
 }
 function initializeUiStateAndLoad() {
-  return Promise.all([restoreUiState(), restoreGapExpansionSessionState()]).finally(function () { return loadLazy(); });
+  return Promise.all([
+    restoreUiState(),
+    restoreGapExpansionSessionState(),
+    loadSettings()
+  ]).finally(function () { return loadLazy(); });
 }
 const asksByConv = new Map();
 let recycleItems = [];
@@ -320,6 +324,26 @@ function syncSourceFlags() {
   includeImpAns = showSeo || showAns;
 }
 
+function calendarRange() {
+  return {
+    minTs: parseBound($("fromBox") && $("fromBox").value, false),
+    maxTs: parseBound($("toBox") && $("toBox").value, true)
+  };
+}
+function inCalendarRange(ts, range) {
+  const n = Number(ts) || 0;
+  if (range.minTs != null && n < range.minTs) return false;
+  if (range.maxTs != null && n > range.maxTs) return false;
+  return true;
+}
+async function loadSettings() {
+  const bag = await chrome.storage.local.get({
+    explorerFromValue: "", explorerToValue: ""
+  });
+  if ($("fromBox")) $("fromBox").value = bag.explorerFromValue || "";
+  if ($("toBox")) $("toBox").value = bag.explorerToValue || "";
+  return bag;
+}
 async function getAll() {
   try {
     const db = await openDb();
@@ -328,7 +352,12 @@ async function getAll() {
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
-    if (fromIdb.length) return fromIdb.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    if (fromIdb.length) {
+      const range = calendarRange();
+      let list = fromIdb.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+      list = list.filter(function (r) { return inCalendarRange(r.updatedAt || r.createdAt || 0, range); });
+      return list;
+    }
   } catch (_) {}
   try {
     const bag = await chrome.storage.local.get("recordsCache");
@@ -361,6 +390,8 @@ async function loadAsksIndex() {
   if (!all.length) {
     try { all = ((await chrome.runtime.sendMessage({ type: "get-asks" })) || {}).rows || []; } catch (_) {}
   }
+  const range = calendarRange();
+  all = all.filter(function (a) { return inCalendarRange(a.ts, range); });
   for (const a of all) {
     a.answers = [];
     const list = asksByConv.get(a.convKey) || [];
@@ -381,6 +412,7 @@ async function loadAsksIndex() {
   if (!ans.length) {
     try { ans = (await chrome.storage.local.get("answersCache")).answersCache || []; } catch (_) {}
   }
+  ans = ans.filter(function (a) { return inCalendarRange(a.ts, range); });
   ans.sort((a, b) => (a.ts || 0) - (b.ts || 0));
   for (const a of ans) {
     const list = asksByConv.get(a.convKey) || [];
