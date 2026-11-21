@@ -26,45 +26,6 @@ const $ = (id) => document.getElementById(id);
 let lasttotal=10000;
 let lastsorteditems=[];
 let rows = [];
-
-// ===== Explorer 2: RowsView facade (incremental batch load) =====
-// Render layer talks only to RowsView. IndexedDB stays inside the loader.
-const BATCH = 400;
-let totalCount = 0;
-let exhausted = false;
-let rowsLoading = null;
-
-const RowsView = {
-  get length() { return rows.length; },
-  get(i) { return rows[i]; },
-  filter(fn) { return rows.filter(fn); },
-  find(fn) { return rows.find(fn); },
-  ensureCount(n) { return ensureRowsCount(n); },
-  ensureConv(ck) { return ensureRowsConv(ck); }
-};
-
-async function ensureRowsCount(n) {
-  while (rows.length < n && !exhausted) {
-    if (!rowsLoading) {
-      const offset = rows.length;
-      rowsLoading = getAll({ limit: BATCH, offset: offset }).then(function (batch) {
-        batch = batch || [];
-        if (batch.length < BATCH) exhausted = true;
-        rows.push.apply(rows, batch);
-      }).finally(function () { rowsLoading = null; });
-    }
-    await rowsLoading;
-  }
-}
-
-async function ensureRowsConv(ck) {
-  while (!rows.some(function (r) { return r.convKey === ck; }) && !exhausted) {
-    await ensureRowsCount(rows.length + BATCH);
-  }
-  return rows.find(function (r) { return r.convKey === ck; }) || null;
-}
-// ===== end RowsView =====
-
 let filter = "all";
 let selectedId = null;
 let showOnMsg = false;
@@ -85,14 +46,19 @@ let existingTimeSliderTimer = null;
 let existingTimeSliderNavigating = false;
 const EXISTING_TIME_SLIDER_DEBOUNCE_MS = 0;
 
+
+
+let globalIndexByNid = new Map();
+let globalNidByIndex = new Map();
+let timeIndex = [];   // [{ nid, ts }], oldest first
+
 function cancelPendingExistingTimeSliderNavigation() {
   if (existingTimeSliderTimer !== null) {
     clearTimeout(existingTimeSliderTimer);
     existingTimeSliderTimer = null;
   }
 }
-let globalIndexByNid = new Map();
-let globalNidByIndex = new Map();
+ 
 // Per-conversation chronological navigation index; reused until the global item index changes.
 const currentChatNavIndexCache = new Map();
 let globalChronologicalIndexGeneration = 0;
@@ -354,8 +320,7 @@ function syncSourceFlags() {
   includeImpAns = showSeo || showAns;
 }
 
-async function getAll(opts) {
-  opts = opts || {};
+async function getAll() {
   try {
     const db = await openDb();
     const fromIdb = await new Promise((resolve, reject) => {
@@ -363,12 +328,7 @@ async function getAll(opts) {
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
-    if (fromIdb.length) {
-      let list = fromIdb.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-      if (opts.offset) list = list.slice(opts.offset);
-      if (opts.limit) list = list.slice(0, opts.limit);
-      return list;
-    }
+    if (fromIdb.length) return fromIdb.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
   } catch (_) {}
   try {
     const bag = await chrome.storage.local.get("recordsCache");
@@ -440,7 +400,7 @@ async function loadAsksIndex() {
   }
 }
 
-const PAGE = 80;
+const PAGE = 30;
 const DT_BATCH = 120; // items loaded per chronological scroll batch
 let datetimeItems = [];
 let dtStart = 0;
@@ -598,6 +558,11 @@ function viewAsks(convKey) {
   return (filter === "recycle" ? recycleAsks : asksByConv).get(convKey) || [];
 }
 function nodeLiked(n) { return !!(n && n.liked); }
+// Search in the favorites bag: only liked items become hits / item DOM.
+// Normal fav-bag browsing (empty search) is unchanged.
+function searchInFavOnlyLiked() {
+  return filter === "favorites" && parseSearch($("q").value).tokens.length > 0;
+}
 function findByNid(nid) {
   const id = String(nid || "");
   const kind = (id.startsWith("ans-") || id.startsWith("seo-")) ? "answer" : id.startsWith("onMsg-") ? "onMsg" : "ask";
@@ -1099,6 +1064,7 @@ function askBlock(r, list, tokens) {
     // 1. Collect OnMsg nodes
     if (isOnMsg(c)) {
       if ((showOnMsg || filter === "favorites") && inTime(askTs) && showAsk(c)) {
+        if (searchInFavOnlyLiked() && !nodeLiked(c)) return;
         const nid = "onMsg-" + (c.recordKey || c.localIndex);
         if (!hitMode || searchHitNids.has(nid) || inOpenedGap(nid, r.convKey) || inOpenedOlderHistory(nid, r.convKey)) {
           flatItems.push({
@@ -1127,7 +1093,7 @@ function askBlock(r, list, tokens) {
     }
 
     // 2. Collect Ask / Sei nodes independently (flat)
-    if ((showSei || showAsk || filter === "favorites") && showAsk(c) && showAskNode(c) && inTime(askTs)) {
+    if ((showSei || showAsk || filter === "favorites") && showAsk(c) && showAskNode(c) && inTime(askTs) && !(searchInFavOnlyLiked() && !nodeLiked(c))) {
       const askNid = askNidPrefix(c) + "-" + (c.recordKey || c.localIndex);
       const askHit = searchHitNids.has(askNid);
       const gapAsk = inOpenedGap(askNid, r.convKey);
@@ -1378,7 +1344,8 @@ function applySearchUnfold(r, tokens) {
 
 function collectHits(r, tokens) {
   const list = viewAsks(r.convKey);
-  function add(kind, idLabel, text, ts, isMessage) {
+  function add(kind, idLabel, text, ts, isMessage, likedNode) {
+    if (searchInFavOnlyLiked() && !nodeLiked(likedNode)) return;
     lineHits(text, tokens, !!isMessage).forEach(function (h) {
       hitList.push({
         urlid: r.id,
@@ -1392,16 +1359,16 @@ function collectHits(r, tokens) {
       });
     });
   }
-  if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r));
+  if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r), false, null);
   if (showOnMsg) {
     liveAsks(list).filter((c) => isOnMsg(c) && inTime(c.ts)).forEach(function (c) {
-      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true);
+      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true, c);
     });
   }
   list.filter((c) => !isOnMsg(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
-    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true);
+    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true, c);
     (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a)).forEach(function (a) {
-      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
+      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true, a);
     });
   });
 }
@@ -1420,6 +1387,7 @@ function rowHtml(r) {
   const chatBtns =
     '<button class="chat-unfold-all" data-ck="' + esc(r.convKey) + '" type="button" title="Create and show every item in this chat">ua</button>' +
     '<button class="chat-unfold-existing" data-ck="' + esc(r.convKey) + '" type="button" title="Show items already created for this chat">ue</button>' +
+    '<button class="chat-unfold-fav" data-ck="' + esc(r.convKey) + '" type="button" title="Unfold liked items in this chat">uf</button>' +
     '<button class="chat-unfold-range" data-ck="' + esc(r.convKey) + '" type="button" title="Unfold a range of items (e.g. 9:18,-17:-8)">ur</button>' +
     '<button class="chat-fold" data-ck="' + esc(r.convKey) + '" type="button" title="Hide this chat\'s items">Fold</button>';
   const detail = (tokens.length || forceAll || forceAllActive) && show
@@ -1472,6 +1440,9 @@ function buildGlobalChronologicalIndex() {
     globalIndexByNid.set(entry.nid, index);
     globalNidByIndex.set(index, entry.nid);
   });
+  
+  timeIndex = entries.map(function (e) { return { nid: e.nid, ts: e.ts }; });
+  
   updateGlobalNavSlider(globalIndexByNid.get(String(selectedNid || "")) || 1);
   updateExistingTimeNavSlider();
 }
@@ -1564,7 +1535,7 @@ function drawExistingTimeHitStrip(items) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!total) return;
+  //if (!total) return;
 
   for (let i = 0; i < total; i++) {
     const color = !hasKeywordSearch
@@ -1587,9 +1558,14 @@ function updateExistingTimeNavSlider2() {
 //  ---if using this , when 'unfold all'  for a chat , it will induce a race condition. 
   const slider = $("existingTimeNavSlider");
   const count = $("existingTimeNavSliderCount");
-  if (!slider || !count) return;
+  //if (!slider || !count) return;
+  //if (!slider || !count) return;
+  if (!slider ) return;
  
   
+  slider.disabled = 0;
+  //const items = getExistingTimeNavigationItems();
+  //lastsorteditems = items; 
   //drawExistingTimeHitStrip(lastsorteditems);
   
   
@@ -1610,8 +1586,11 @@ function updateExistingTimeNavSlider() {
   console.log ("updateExistingTimeNavSlider is called ")
   const slider = $("existingTimeNavSlider");
   const count = $("existingTimeNavSliderCount");
-  if (!slider || !count) return;
+  //if (!slider || !count) return;
+  if (!slider ) return;
   const items = getExistingTimeNavigationItems();
+  items;
+   console.log ("in updateExistingTimeNavSlider assign to lastsorteditems ")
     lastsorteditems = items;
   drawExistingTimeHitStrip(items);
   const total = items.length;
@@ -2100,39 +2079,46 @@ function jumpExistingItem(delta) {
 }
 
 function jumpExistingByTime(delta) {
+    if (dirtyflag1)  updateExistingTimeNavSlider();
+    
+    if (dirtyflag1) dirtyflag1 = false; 
   const items = getExistingTimeNavigationItems();
   if (!items.length) {
     //updateExistingTimeNavSlider();
     return;
   }
   let idx = items.findIndex(function (item) { return item.nid === String(selectedNid || ""); });
-  if (idx < 0) {
+     if (idx < 0) idx = 0;
+  //else idx = (idx + delta + items.length) % items.length;
+   //if (idx < 0) idx = 0;
+  if (0) if (idx < 0) {
     const body = middleMode === "item" ? $("dateTimeView") : $("titleView");
     const selectedEl = body && body.querySelector(".ptt-selected[data-nid], tr.ptt-selected[data-nid]");
     if (selectedEl) idx = items.findIndex(function (item) { return item.nid === String(selectedEl.dataset.nid || ""); });
   }
+
   if (idx < 0) {
     $("status").textContent = "Select an indexed item first.";
-    if (dirtyflag1)  updateExistingTimeNavSlider();
-    
-    if (dirtyflag1) dirtyflag1 = false; 
     return;
   }
-  const targetIndex = idx + (delta < 0 ? -1 : 1);
+  
+  
+  
+  const step = delta < 0 ? -1 : 1;
+const targetIndex = (idx + step + items.length) % items.length;
+  //const targetIndex = idx + (delta < 0 ? -1 : 1);
   if (targetIndex < 0 || targetIndex >= items.length) {
     $("status").textContent = "No further existing item in time order.";
-       if (dirtyflag1)  updateExistingTimeNavSlider();
-    
-    if (dirtyflag1) dirtyflag1 = false; 
+ 
     return;
   }
   const target = items[targetIndex];
+  
+  
   revealExistingItem(target.el);
   const selected = selectItemByNid(target.nid, true, "head");
   if (!selected) $("status").textContent = "Could not focus existing item " + target.nid + ".";
-    if (dirtyflag1)  updateExistingTimeNavSlider();
-    
-    if (dirtyflag1) dirtyflag1 = false; 
+ 
 }
 
 function updateHeaderIndicators() {
@@ -2175,7 +2161,10 @@ function renderSlice(reset) {
   const tb = $("titleView");
   if (reset) { shown = 0; tb.innerHTML = ""; }
   const next = matched.slice(shown, shown + PAGE);
-  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+  if (next.length) {
+    tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+    dirtyflag1 = true;
+  }
   if (0) next.forEach(function (r) {
     const index = matched.indexOf(r);
     if (index >= 0) insertTitleSessionAtSearchPosition(index);
@@ -2225,6 +2214,38 @@ function applyEditedText(recordKey, kind, text) {
 
 // Refresh only the edited message inside its existing three-line PTT node.
 // Keep chat metadata, item metadata, tree controls, menu and node identity intact.
+
+// Update only the liked star and the 3-dots menu button on an existing node.
+function refreshLikedStateInNode(nodeEl, dotsBtn, liked) {
+  if (!nodeEl || !dotsBtn) return;
+  const menu = dotsBtn.parentElement && dotsBtn.parentElement.querySelector(".ptt-menu");
+  if (menu) {
+    const btn = menu.querySelector(".ptt-like, .ptt-unlike");
+    if (btn) {
+      btn.className = liked ? "ptt-unlike" : "ptt-like";
+      btn.textContent = liked ? "Unlike" : "Like";
+    }
+  }
+  dotsBtn.dataset.liked = liked ? "1" : "0";
+
+  const row = nodeEl.querySelector(":scope > .ptt-row");
+  if (row) {
+    let star = row.querySelector(".ptt-like-mark");
+    if (liked) {
+      if (!star) {
+        star = document.createElement("span");
+        star.className = "ptt-like-mark";
+        star.title = "liked";
+        star.textContent = "\u2605";
+        const meta = row.querySelector(".ptt-item-meta") || row;
+        meta.prepend(star);
+      }
+    } else if (star) {
+      star.remove();
+    }
+  }
+}
+
 function refreshEditedMessageInNode(nodeEl, dotsBtn, text) {
   if (!nodeEl) return;
   const nid = String(nodeEl.dataset.nid || (dotsBtn && dotsBtn.dataset.nid) || "");
@@ -2324,7 +2345,8 @@ function seek(q) {
   const titleBody = $("titleView");
   // Same query (a bag switch, refresh of the list): keep the pane and only
   // hide/show by bag, in search and no-search. A new query still rebuilds.
-  const keepExisting = !forceAll && !isNewQuery && titleBody && titleBody.querySelector("tr[data-id][data-ck]");
+  let keepExisting = !forceAll && !isNewQuery && titleBody && titleBody.querySelector("tr[data-id][data-ck]");
+    keepExisting = !forceAll  
    if (keepExisting) {
     const allowed = new Set(matched.map(function (r) { return String(r.convKey); }));
     titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
@@ -2338,9 +2360,21 @@ function seek(q) {
       } else if (detail) {
         openChats.add(ck);
         detail.hidden = false;
-        detail.querySelectorAll(".ptt-node").forEach(function (node) {
-          node.hidden = false;
-          if (node.style.display === "none") node.style.display = "";
+        const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+        const replace = $("replaceExistingNid") && $("replaceExistingNid").checked;
+        const hits = hitList.filter(function (h) { return String(h.convKey) === ck; });
+        hits.forEach(function (h) {
+          const nid = String(h.nid);
+          if (searchInFavOnlyLiked()) {
+            const hitNode = findByNid(nid);
+            if (!hitNode || !hitNode.node || !nodeLiked(hitNode.node)) return;
+          }
+          const existing = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+          if (existing) {
+            if (!replace) return;          // option 1: keep each data-nid once
+            existing.remove();             // option 2: drop old, add fresh
+          }
+          if (tree) insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, parsed.tokens), h.ts || 0);
         });
       } else if (parsed.tokens.length) {
         // Chat is entering this bag with no detail yet. Create its hits once.
@@ -2367,66 +2401,18 @@ function seek(q) {
   const firstPage = matched.slice(0, PAGE);
   if (firstPage.length && titleBody) titleBody.insertAdjacentHTML("beforeend", firstPage.map(rowHtml).join(""));
   shown = firstPage.length;
-  } else {
-  //jcx
-    //if (titleBody) titleBody.innerHTML = "";
-    //const firstPage = matched.slice(0, PAGE);
-    //if (firstPage.length && titleBody) titleBody.insertAdjacentHTML("beforeend", firstPage.map(rowHtml).join(""));
-    //shown = firstPage.length;
-    // New query, but do not wipe. Treat it like an incremental update.
-  const allowed = new Set(matched.map(function (r) { return String(r.convKey); }));
-
-  if (titleBody) {
-    titleBody.querySelectorAll("tr[data-id][data-ck]").forEach(function (row) {
-      const ck = String(row.dataset.ck || "");
-      renderedCks.add(ck);
-      const inBag = allowed.has(ck);
-        //jcx
-      //row.hidden = !inBag;
-      row.hidden = false ;
-      const detail = titleBody.querySelector('tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
-      if (!inBag) {
-        //jcx
-        //if (detail) detail.hidden = true;
-        if (detail) detail.hidden = false ;
-      } else if (detail) {
-        openChats.add(ck);
-        detail.hidden = false;
-        // optionally: only unhide hit nodes, or leave them and let paintHits handle visibility
-        detail.querySelectorAll(".ptt-node").forEach(function (node) {
-          node.hidden = false;
-          if (node.style.display === "none") node.style.display = "";
-        });
-      } else if (parsed.tokens.length) {
-        // Chat is entering this bag with no detail yet. Create its hits once.
-        const session = matched.find(function (r) { return String(r.convKey) === ck; });
-        if (session) {
-          openChats.add(ck);
-          row.insertAdjacentHTML("afterend",
-            '<tr class="cmt-row" data-ck="' + esc(ck) + '"><td colspan="6">' +
-            askBlock(session, viewAsks(ck), parsed.tokens) + "</td></tr>");
-        }
-      }
-    });
-
-    // Create rows/details only for matched chats that are not yet in the DOM
-    matched.slice(0, PAGE).forEach(function (r) {
-      const ck = String(r.convKey);
-      if (renderedCks.has(ck)) return;
-      renderedCks.add(ck);
-      if (parsed.tokens.length) openChats.add(ck);
-      titleBody.insertAdjacentHTML("beforeend", rowHtml(r));
-    });
-  }
-  shown = matched.filter(function (r) { return renderedCks.has(String(r.convKey)); }).length;
-    
-
-
-    
-    
-    
-    
-  }
+  }  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   // Search fills both panes. Date-pane render happens before the pin replay
   // below, so a later m/n insert is not wiped by this search render.
   renderItemMode(parsed.tokens);
@@ -2626,16 +2612,13 @@ async function loadRecycle() {
 
 async function loadLazy() {
   rows = []; matched = []; shown = 0;
-  exhausted = false;
-  totalCount = 0;
   if ($("titleView")) $("titleView").innerHTML = "";
   if ($("dateTimeView")) $("dateTimeView").innerHTML = "";
   datetimeItems = []; dtStart = dtEnd = 0;
   setSeek(0, "Loading 0%");
   try {
     await loadAsksIndex();
-    // Explorer 2: only the first batch; more arrives via RowsView.ensureCount
-    await RowsView.ensureCount(BATCH);
+    rows = await getAll();
     updateLockAllTitlesButton();
     await loadRecycle();
     seek($("q").value);
@@ -2734,6 +2717,30 @@ document.addEventListener("change", async function (e) {
   $("status").textContent = checkbox.checked ? "Conversation title locked." : "Conversation title unlocked.";
 });
 
+
+function refreshChatTitle(ck, title) {
+  const rec = rows.find(function (r) { return String(r.convKey) === String(ck); });
+  if (rec) rec.title = title;
+  const matchedRec = matched.find(function (r) { return String(r.convKey) === String(ck); });
+  if (matchedRec && matchedRec !== rec) matchedRec.title = title;
+
+  document.querySelectorAll('button.chat-title-edit[data-ck="' + CSS.escape(ck) + '"]').forEach(function (btn) {
+    const td = btn.closest("td");
+    if (!td) return;
+    td.title = title;
+    const b = td.querySelector(":scope > b");
+    if (b) {
+      b.textContent = title;
+      return;
+    }
+    const controls = btn.closest(".chat-title-controls");
+    let n = controls && controls.nextSibling;
+    while (n && n.nodeType !== 3) n = n.nextSibling;
+    if (n) n.nodeValue = title;
+    else td.appendChild(document.createTextNode(title));
+  });
+}
+
 // Delegate from the document so Read more / Show less works in both panes.
 document.addEventListener("click", function (e) {
   const titleEdit = e.target.closest("button[data-title-edit][data-ck]");
@@ -2747,13 +2754,13 @@ document.addEventListener("click", function (e) {
     if (edited === null) return;
     const title = edited.trim();
     if (!title) { $("status").textContent = "Title was not changed: title cannot be empty."; return; }
-    chrome.runtime.sendMessage({ type: "set-conversation-title", convKey: ck, title: title }, async function (result) {
+    chrome.runtime.sendMessage({ type: "set-conversation-title", convKey: ck, title: title }, function (result) {
       const err = chrome.runtime.lastError;
       if (err || !result || !result.ok) {
         $("status").textContent = "Title edit failed: " + (err ? err.message : (result && result.error) || "conversation not found");
         return;
       }
-      await loadLazy();
+      refreshChatTitle(ck, title);
       $("status").textContent = "Conversation title saved.";
     });
     return;
@@ -2840,12 +2847,20 @@ document.addEventListener("click", function (e) {
     if (!rk) { $("status").textContent = "Like failed: no record for " + nid; return; }
     if (hit && hit.node) hit.node.liked = liked;
     if (ck) openChats.add(ck);
+    logUserAction(liked ? "like" : "unlike", nid, ck);
     chrome.runtime.sendMessage({ type: "set-liked", recordKey: rk, kind: kind, liked: liked }, function (res) {
       const err = chrome.runtime.lastError;
       const again = findByNid(nid);
       if (again && again.node) again.node.liked = liked;
       if (ck) openChats.add(ck);
-      seek($("q").value);
+      // only refresh this node (and any other rendered copy of the same nid)
+      document.querySelectorAll('[data-nid="' + CSS.escape(nid) + '"]').forEach(function (el) {
+        const btn = el.querySelector(".ptt-dots");
+        refreshLikedStateInNode(el, btn || dotsBtn, liked);
+      });
+      if (!document.querySelector('[data-nid="' + CSS.escape(nid) + '"]')) {
+        refreshLikedStateInNode(nodeEl, dotsBtn, liked);
+      }
       $("status").textContent = err
         ? ("Like not saved: " + err.message)
         : ((liked ? "Liked " : "Unliked ") + nid + (res && res.updated === false ? " (not in DB)" : ""));
@@ -2950,6 +2965,54 @@ document.addEventListener("click", function (e) {
     detail.querySelectorAll(".ptt-node").forEach(function (node) {
       node.hidden = false;
       if (node.style.display === "none") node.style.display = "";
+    });
+    return;
+  }
+
+  const unfoldFavBtn = e.target.closest(".chat-unfold-fav");
+  if (unfoldFavBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const ck = String(unfoldFavBtn.dataset.ck || "");
+    if (!ck) return;
+    openChats.add(ck);
+
+    const tokens = parseSearch($("q").value).tokens;
+    const bar = document.querySelector('#titleView tr[data-id][data-ck="' + CSS.escape(ck) + '"]');
+    let detail = document.querySelector('#titleView tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+
+    if (!detail && bar) {
+      const session = matched.find(function (r) { return String(r.convKey) === ck; }) || sessionForConversationKey(ck);
+      if (session) {
+        bar.insertAdjacentHTML("afterend",
+          '<tr class="cmt-row" data-ck="' + esc(ck) + '"><td colspan="6">' +
+          askBlock(session, viewAsks(ck), tokens) + "</td></tr>");
+        detail = bar.nextElementSibling;
+      }
+    }
+    if (!detail) return;
+    detail.hidden = false;
+
+    const likedNids = [];
+    (viewAsks(ck) || []).forEach(function (c) {
+      if (nodeLiked(c)) likedNids.push(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
+      (c.answers || []).forEach(function (a) {
+        if (nodeLiked(a)) likedNids.push(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex));
+      });
+    });
+
+    const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+    likedNids.forEach(function (nid) {
+      let node = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+      if (!node && tree) {
+        const hit = findByNid(nid);
+        insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, tokens), (hit && hit.node && hit.node.ts) || 0);
+        node = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+      }
+      if (node) {
+        node.hidden = false;
+        if (node.style.display === "none") node.style.display = "";
+      }
     });
     return;
   }
@@ -4186,6 +4249,7 @@ const newest = globalNidByIndex.get(globalNidByIndex.size);
  });
 if (0) $("globalGotoBtn").addEventListener("click", function () { 
 if (!globalNidByIndex.size) buildGlobalChronologicalIndex();
+dirtyflag1 = true;
   const newest = globalNidByIndex.get(globalNidByIndex.size);
   if (!newest) {
     $("status").textContent = "No indexed items.";
@@ -4385,7 +4449,7 @@ let flickerTimer = null;
 function flickerShort() {
   clearTimeout(flickerTimer);
   const el = $("status");
-  const msg = "search pattern string length leq 3, need to press enter key";
+  const msg = "search pattern string length leq 203, need to press enter key";
   el.textContent = msg;
   let n = 0;
   const tick = function () {
@@ -4425,8 +4489,8 @@ $("rawSearch").addEventListener("change", function () {
 $("q").addEventListener("input", function () {
   clearTimeout(searchTimer);
   const n = patternLen($("q").value);
-  if (n <= 3 && n >= 1) { flickerShort(); return; }
-  if (n > 3 || n === 0) searchTimer = setTimeout(function () { seek($("q").value); }, 500);
+  if (n <= 203 && n >= 1) { flickerShort(); return; }
+  if (n > 203 || n === 0) searchTimer = setTimeout(function () { seek($("q").value); }, 500);
 });
 $("q").addEventListener("keydown", function (e) {
   if (e.key !== "Enter") return;
@@ -4632,6 +4696,7 @@ $("clearAllBtn").onclick = function () {
   renderedCks.clear();
   const body = $("titleView");
   if (body) {
+  //body.querySelectorAll("tr[data-id][data-ck]").forEach(row => row.remove());
     body.querySelectorAll(".ptt-node[data-nid]").forEach(function (node) { node.remove(); });
     body.querySelectorAll("tr.cmt-row").forEach(function (detail) { detail.remove(); });
   }
@@ -5224,16 +5289,10 @@ document.querySelector(".listwrap").addEventListener("scroll", function (e) {
         }, 50);
       }
     }
-  } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) {
-    // Explorer 2: if in-memory matched is exhausted, pull the next batch via RowsView
-    if (shown >= matched.length && !exhausted) {
-      RowsView.ensureCount(rows.length + BATCH).then(function () {
-        seek($("q").value);
-        renderSlice(false);
-      });
-    } else if (shown < matched.length) {
-      renderSlice(false);
-    }
+  } else if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40 && shown < matched.length) {
+  
+  // renderSlice(false);   ---this is needed by the title pane,   if without this , title pane 's down scroll appending becomes stutter . ---by jcx
+   renderSlice(false);
   }
 });
  
@@ -5586,8 +5645,389 @@ function fillHolesInChatBars(limit) {
 
 
 document.addEventListener("keydown", function (e) {
-  if (e.key === "PageDown") {
+  // Ctrl+9 → same as scrolling to the bottom (load next batch / renderSlice)
+  if (e.ctrlKey && e.key === "8" && !e.altKey && !e.metaKey) {
     e.preventDefault();          // optional: stop the normal page scroll
     fillHolesInChatBars(20);
+  }
+});
+
+// this is the brutal search method.
+if (0) $("goTimePointBtn").addEventListener("click", function () {
+  const raw = ($("timePointInput").value || "").trim();
+  const target = Date.parse(raw.replace(" ", "T"));
+  if (!Number.isFinite(target)) { $("status").textContent = "Enter a time like 2026-11-15 12:00."; return; }
+  if (!globalNidByIndex.size) buildGlobalChronologicalIndex();
+
+  let bestNid = null, bestDist = Infinity;
+  globalNidByIndex.forEach(function (nid) {
+    const hit = findByNid(nid);
+    const ts = hit && hit.node ? (hit.node.ts || 0) : 0;
+    const d = Math.abs(ts - target);
+    if (d < bestDist) { bestDist = d; bestNid = nid; }
+  });
+  if (!bestNid) { $("status").textContent = "No indexed items."; return; }
+
+  const tokens = parseSearch($("q").value).tokens;
+  ensureTitleNidRendered(bestNid, tokens);
+  revealChat(findConvForNid(bestNid));
+  selectItemByNid(bestNid, true, "head");
+  selectedNid = bestNid;
+  $("status").textContent = "Closest item to " + raw + ": " + bestNid + " (" + Math.round(bestDist / 1000) + "s off).";
+});
+
+
+
+
+(function initTimePointScroll() {
+  const input = $("timePointInput");
+  if (!input) return;
+
+  function fmt(ts) {
+    const d = new Date(ts);
+    const p = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+      + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  input.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    let base = Date.parse((input.value || "").trim().replace(" ", "T"));
+    if (!Number.isFinite(base)) base = Date.now();
+    const step = e.deltaY > 0 ? -3600000 : 3600000;   // down = -1h, up = +1h
+    input.value = fmt(base + step);
+  }, { passive: false });
+})();
+
+
+function closestByTime(target) {
+  if (!timeIndex.length) return null;
+  let lo = 0, hi = timeIndex.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timeIndex[mid].ts < target) lo = mid + 1;
+    else hi = mid;
+  }
+  const next = timeIndex[lo];
+  const prev = timeIndex[lo - 1];
+  if (!prev) return next.nid;
+  return (target - prev.ts) <= (next.ts - target) ? prev.nid : next.nid;
+}
+
+$("goTimePointBtn").addEventListener("click", function () {
+  const raw = ($("timePointInput").value || "").trim();
+  const target = Date.parse(raw.replace(" ", "T"));
+  if (!Number.isFinite(target)) { $("status").textContent = "Enter a time like 2026-11-15 12:00."; return; }
+  if (!globalNidByIndex.size) buildGlobalChronologicalIndex();
+
+  const bestNid = closestByTime(target);
+  if (!bestNid) { $("status").textContent = "No indexed items."; return; }
+
+  const tokens = parseSearch($("q").value).tokens;
+  ensureTitleNidRendered(bestNid, tokens);
+  revealChat(findConvForNid(bestNid));
+  selectItemByNid(bestNid, true, "head");
+  selectedNid = bestNid;
+  $("status").textContent = "Closest item to " + raw + ": " + bestNid + ".";
+});
+
+
+// ========== User Action Log (standalone IndexedDB) ==========
+const ACTION_DB_NAME = "aiChatLoggerUserActions";
+const ACTION_STORE = "user_action_log";
+let actionDbPromise = null;
+let actionRecords = [];
+let actionFiltered = [];
+let actionCursor = -1;
+let actionNodeFormat = "$action\\n$timestamp\\n$itemtext\\n$convTitle\\n$convURL";
+
+function openActionDb() {
+  if (actionDbPromise) return actionDbPromise;
+  actionDbPromise = new Promise(function (resolve, reject) {
+    if (!window.indexedDB) { reject(new Error("IndexedDB unavailable")); return; }
+    const req = indexedDB.open(ACTION_DB_NAME, 1);
+    req.onupgradeneeded = function () {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(ACTION_STORE)) {
+        const store = db.createObjectStore(ACTION_STORE, { keyPath: "id", autoIncrement: true });
+        store.createIndex("ts", "ts");
+        store.createIndex("nid", "nid");
+        store.createIndex("action_type", "action_type");
+      }
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  }).catch(function (err) { actionDbPromise = null; throw err; });
+  return actionDbPromise;
+}
+
+function logUserAction(actionType, nid, convKey) {
+  openActionDb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(ACTION_STORE, "readwrite");
+      tx.objectStore(ACTION_STORE).add({
+        ts: Date.now(),
+        action_type: String(actionType || ""),
+        nid: String(nid || ""),
+        convKey: String(convKey || "")
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }).catch(function (err) {
+    console.warn("Action log write failed", err);
+  });
+}
+
+async function loadAllActions() {
+  const db = await openActionDb();
+  return new Promise(function (resolve, reject) {
+    const req = db.transaction(ACTION_STORE, "readonly").objectStore(ACTION_STORE).getAll();
+    req.onsuccess = function () { resolve(req.result || []); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+
+function parseActionFormat() {
+  // Look for action_node_format in the current side route text if any
+  const route = (sideRoutes || []).find(function (r) { return r.id === "actions" || (r.text || "").toLowerCase().indexOf("action_node_format:") >= 0; });
+  if (route && route.text) {
+    const m = String(route.text).match(/action_node_format:\s*([^\n]+)/i);
+    if (m) actionNodeFormat = m[1].trim();
+  }
+}
+
+function formatActionNode(rec) {
+  const hit = findByNid(rec.nid);
+  const itemText = (hit && hit.node && hit.node.text) || "";
+  const session = rec.convKey ? (rows.concat(recycleChats || []).find(function (r) { return String(r.convKey) === String(rec.convKey); }) || null) : null;
+  const convTitle = (session && session.title) || "";
+  const convURL = (session && (session.url || session.conversationId)) || "";
+  const map = {
+    action: rec.action_type || "",
+    timestamp: fmtTs(rec.ts),
+    itemtext: itemText,
+    convtitle: convTitle,
+    convurl: convURL
+  };
+  let out = actionNodeFormat;
+  out = out.replace(/\\n/g, "\n");
+  out = out.replace(/\$(\w+)/gi, function (_, key) {
+    const k = key.toLowerCase();
+    return map[k] != null ? String(map[k]) : "";
+  });
+  return out;
+}
+
+function actionInRange(ts) {
+  const from = parseBound($("actionFrom") && $("actionFrom").value, false);
+  const to = parseBound($("actionTo") && $("actionTo").value, true);
+  const n = Number(ts) || 0;
+  if (from != null && n < from) return false;
+  if (to != null && n > to) return false;
+  return true;
+}
+
+async function refreshActionPane() {
+  if (filter !== "actions") return;
+  parseActionFormat();
+  try {
+    actionRecords = await loadAllActions();
+  } catch (e) {
+    actionRecords = [];
+  }
+  actionRecords.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); }); // newest first
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+  const onlyHits = $("actionOnlyHits") && $("actionOnlyHits").checked;
+  actionFiltered = actionRecords.filter(function (rec) {
+    if (!actionInRange(rec.ts)) return false;
+    if (onlyHits && tokens.length) {
+      const text = formatActionNode(rec);
+      if (!hayHasTokens(text, tokens)) return false;
+    }
+    return true;
+  });
+  renderActionList(tokens);
+  if ($("actionStatus")) $("actionStatus").textContent = actionFiltered.length + " action(s)";
+  if (actionCursor >= actionFiltered.length) actionCursor = actionFiltered.length - 1;
+}
+
+function renderActionList(tokens) {
+  const list = $("actionList");
+  if (!list) return;
+  list.innerHTML = actionFiltered.map(function (rec, i) {
+    const raw = formatActionNode(rec);
+    const html = highlightText(raw, tokens || []);
+    return '<div class="action-node ptt-node" data-idx="' + i + '" data-nid="' + esc(rec.nid) + '">' +
+      '<div class="ptt-row"><div class="ptt-txt">' + html + '</div></div></div>';
+  }).join("");
+  if (actionCursor >= 0) {
+    const el = list.querySelector('[data-idx="' + actionCursor + '"]');
+    if (el) el.classList.add("sel");
+  }
+}
+
+function showActionPane() {
+  document.body.classList.add("mode-actions");
+  refreshActionPane();
+}
+function hideActionPane() {
+  document.body.classList.remove("mode-actions");
+}
+
+// Hook into filter changes
+const _origSeek = seek;
+seek = function (q) {
+  if (filter === "actions") {
+    showActionPane();
+    return;
+  }
+  hideActionPane();
+  return _origSeek(q);
+};
+
+// Bind action pane controls
+function bindActionControls() {
+  const q = $("actionQ");
+  if (q) q.addEventListener("input", function () { refreshActionPane(); });
+  const only = $("actionOnlyHits");
+  if (only) only.addEventListener("change", function () { refreshActionPane(); });
+  ["actionFrom", "actionTo"].forEach(function (id) {
+    const box = $(id);
+    if (!box) return;
+    box.addEventListener("change", function () { refreshActionPane(); });
+    box.addEventListener("input", function () { refreshActionPane(); });
+  });
+  function bindCal(which) {
+    const box = $(which === "from" ? "actionFrom" : "actionTo");
+    const cal = $(which === "from" ? "actionFromCal" : "actionToCal");
+    const picker = $(which === "from" ? "actionFromPicker" : "actionToPicker");
+    if (!box || !cal || !picker) return;
+    function open() {
+      if (box.value && /^\d{4}-\d{2}-\d{2}/.test(box.value)) picker.value = box.value.slice(0, 10);
+      if (picker.showPicker) picker.showPicker(); else picker.click();
+    }
+    cal.addEventListener("click", open);
+    box.addEventListener("click", open);
+    picker.addEventListener("change", function () { box.value = picker.value || ""; refreshActionPane(); });
+  }
+  bindCal("from");
+  bindCal("to");
+  const prev = $("actionPrev");
+  const next = $("actionNext");
+  if (prev) prev.addEventListener("click", function () {
+    if (!actionFiltered.length) return;
+    actionCursor = (actionCursor <= 0 ? actionFiltered.length - 1 : actionCursor - 1);
+    renderActionList(parseSearch($("actionQ").value).tokens);
+    const el = $("actionList").querySelector('[data-idx="' + actionCursor + '"]');
+    if (el) el.scrollIntoView({ block: "nearest" });
+  });
+  if (next) next.addEventListener("click", function () {
+    if (!actionFiltered.length) return;
+    actionCursor = (actionCursor >= actionFiltered.length - 1 ? 0 : actionCursor + 1);
+    renderActionList(parseSearch($("actionQ").value).tokens);
+    const el = $("actionList").querySelector('[data-idx="' + actionCursor + '"]');
+    if (el) el.scrollIntoView({ block: "nearest" });
+  });
+  const list = $("actionList");
+  if (list) list.addEventListener("click", function (e) {
+    const node = e.target.closest(".action-node");
+    if (!node) return;
+    actionCursor = Number(node.dataset.idx);
+    list.querySelectorAll(".action-node").forEach(function (n) { n.classList.toggle("sel", n === node); });
+  });
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bindActionControls);
+} else {
+  bindActionControls();
+}
+
+
+// ========== Live prepend of newly arriving asks ==========
+function shouldPrependNew() {
+  return !!($("prependNew") && $("prependNew").checked);
+}
+
+function upsertRowLive(rec) {
+  if (!rec || !rec.convKey) return false;
+  const ck = String(rec.convKey);
+  const i = rows.findIndex(function (r) { return String(r.convKey) === ck; });
+  if (i >= 0) {
+    rows[i] = Object.assign(rows[i], rec);
+    return false;
+  }
+  if (shouldPrependNew()) rows.unshift(rec);
+  else rows.push(rec);
+  return true;
+}
+
+function upsertAskLive(ask) {
+  if (!ask || !ask.convKey) return;
+  const list = asksByConv.get(ask.convKey) || [];
+  if (list.some(function (x) { return x.recordKey === ask.recordKey; })) return;
+  ask.answers = ask.answers || [];
+  list.push(ask);
+  list.sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+  asksByConv.set(ask.convKey, list);
+}
+
+function moveChatBarToTop(ck) {
+  const tb = $("titleView");
+  if (!tb) return;
+  const row = tb.querySelector('tr[data-id][data-ck="' + CSS.escape(ck) + '"]');
+  if (!row) return;
+  const detail = row.nextElementSibling && row.nextElementSibling.classList.contains("cmt-row")
+    ? row.nextElementSibling : null;
+  if (tb.firstChild !== row) tb.insertBefore(row, tb.firstChild);
+  if (detail) tb.insertBefore(detail, row.nextSibling);
+}
+
+function onExplorerAskAdded(msg) {
+  if (!msg || !msg.convKey || !msg.askKey) return;
+  const ck = String(msg.convKey);
+  const session = {
+    convKey: ck,
+    platform: msg.platform || "",
+    conversationId: msg.conversationId || "",
+    url: msg.url || "",
+    title: msg.title || msg.conversationId || "(new chat)",
+    createdAt: msg.ts || Date.now(),
+    updatedAt: msg.ts || Date.now()
+  };
+  // Preserve existing id / title if the chat is already known
+  const existing = rows.find(function (r) { return String(r.convKey) === ck; });
+  if (existing) {
+    session.id = existing.id;
+    if (existing.title) session.title = existing.title;
+  } else {
+    session.id = "live-" + Date.now();
+  }
+  upsertRowLive(session);
+
+  const ask = {
+    convKey: ck,
+    recordKey: msg.askKey,
+    localIndex: msg.askLocalIndex || 0,
+    text: msg.text || "",
+    ts: msg.ts || Date.now(),
+    source: msg.source || "onMsg",
+    answers: []
+  };
+  upsertAskLive(ask);
+
+  const nid = askNidPrefix(ask) + "-" + (ask.recordKey || ask.localIndex);
+  const tokens = parseSearch($("q").value).tokens;
+  const sess = rows.find(function (r) { return String(r.convKey) === ck; });
+  if (sess && matchRow(sess, $("q").value)) {
+    ensureTitleNidRendered(nid, tokens);
+    if (shouldPrependNew()) moveChatBarToTop(ck);
+  }
+}
+
+chrome.runtime.onMessage.addListener(function (msg) {
+  if (msg && msg.type === "explorer-ask-added") {
+    onExplorerAskAdded(msg);
   }
 });

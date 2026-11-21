@@ -2717,6 +2717,30 @@ document.addEventListener("change", async function (e) {
   $("status").textContent = checkbox.checked ? "Conversation title locked." : "Conversation title unlocked.";
 });
 
+
+function refreshChatTitle(ck, title) {
+  const rec = rows.find(function (r) { return String(r.convKey) === String(ck); });
+  if (rec) rec.title = title;
+  const matchedRec = matched.find(function (r) { return String(r.convKey) === String(ck); });
+  if (matchedRec && matchedRec !== rec) matchedRec.title = title;
+
+  document.querySelectorAll('button.chat-title-edit[data-ck="' + CSS.escape(ck) + '"]').forEach(function (btn) {
+    const td = btn.closest("td");
+    if (!td) return;
+    td.title = title;
+    const b = td.querySelector(":scope > b");
+    if (b) {
+      b.textContent = title;
+      return;
+    }
+    const controls = btn.closest(".chat-title-controls");
+    let n = controls && controls.nextSibling;
+    while (n && n.nodeType !== 3) n = n.nextSibling;
+    if (n) n.nodeValue = title;
+    else td.appendChild(document.createTextNode(title));
+  });
+}
+
 // Delegate from the document so Read more / Show less works in both panes.
 document.addEventListener("click", function (e) {
   const titleEdit = e.target.closest("button[data-title-edit][data-ck]");
@@ -2730,13 +2754,13 @@ document.addEventListener("click", function (e) {
     if (edited === null) return;
     const title = edited.trim();
     if (!title) { $("status").textContent = "Title was not changed: title cannot be empty."; return; }
-    chrome.runtime.sendMessage({ type: "set-conversation-title", convKey: ck, title: title }, async function (result) {
+    chrome.runtime.sendMessage({ type: "set-conversation-title", convKey: ck, title: title }, function (result) {
       const err = chrome.runtime.lastError;
       if (err || !result || !result.ok) {
         $("status").textContent = "Title edit failed: " + (err ? err.message : (result && result.error) || "conversation not found");
         return;
       }
-      await loadLazy();
+      refreshChatTitle(ck, title);
       $("status").textContent = "Conversation title saved.";
     });
     return;
@@ -2802,6 +2826,8 @@ document.addEventListener("click", function (e) {
         applyEditedText(rk, kind, editedText);
         messageBox.innerHTML = originalHtml;
         refreshEditedMessageInNode(nodeEl, dotsBtn, editedText);
+        console.log(' call  logUserAction',"save", nid, ck);
+        logUserAction("save", nid, ck);
         $("status").textContent = "Text saved.";
       });
     };
@@ -4424,7 +4450,7 @@ let flickerTimer = null;
 function flickerShort() {
   clearTimeout(flickerTimer);
   const el = $("status");
-  const msg = "search pattern string length leq 3, need to press enter key";
+  const msg = "search pattern string length leq 203, need to press enter key";
   el.textContent = msg;
   let n = 0;
   const tick = function () {
@@ -4464,8 +4490,8 @@ $("rawSearch").addEventListener("change", function () {
 $("q").addEventListener("input", function () {
   clearTimeout(searchTimer);
   const n = patternLen($("q").value);
-  if (n <= 3 && n >= 1) { flickerShort(); return; }
-  if (n > 3 || n === 0) searchTimer = setTimeout(function () { seek($("q").value); }, 500);
+  if (n <= 203 && n >= 1) { flickerShort(); return; }
+  if (n > 203 || n === 0) searchTimer = setTimeout(function () { seek($("q").value); }, 500);
 });
 $("q").addEventListener("keydown", function (e) {
   if (e.key !== "Enter") return;

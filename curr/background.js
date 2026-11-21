@@ -685,7 +685,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg && msg.type === "log-ask") {
-    upsertConversation(msg).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    upsertConversation(msg).then(function (result) {
+      sendResponse(result);
+      if (result && result.savedAsk && result.askKey) {
+        // Notify open explorer pages so they can prepend the new item.
+        chrome.runtime.sendMessage({
+          type: "explorer-ask-added",
+          convKey: result.convKey,
+          askKey: result.askKey,
+          askLocalIndex: result.askLocalIndex,
+          platform: msg.platform,
+          conversationId: msg.conversationId,
+          url: msg.url || "",
+          title: msg.title || "",
+          text: msg.text || "",
+          ts: msg.ts || Date.now(),
+          source: "onMsg"
+        }).catch(function () {});
+      }
+    }).catch((err) => sendResponse({ error: String(err) }));
     return true;
   }
   if (msg && msg.type === "sync-title") {

@@ -46,14 +46,19 @@ let existingTimeSliderTimer = null;
 let existingTimeSliderNavigating = false;
 const EXISTING_TIME_SLIDER_DEBOUNCE_MS = 0;
 
+
+
+let globalIndexByNid = new Map();
+let globalNidByIndex = new Map();
+let timeIndex = [];   // [{ nid, ts }], oldest first
+
 function cancelPendingExistingTimeSliderNavigation() {
   if (existingTimeSliderTimer !== null) {
     clearTimeout(existingTimeSliderTimer);
     existingTimeSliderTimer = null;
   }
 }
-let globalIndexByNid = new Map();
-let globalNidByIndex = new Map();
+ 
 // Per-conversation chronological navigation index; reused until the global item index changes.
 const currentChatNavIndexCache = new Map();
 let globalChronologicalIndexGeneration = 0;
@@ -395,7 +400,7 @@ async function loadAsksIndex() {
   }
 }
 
-const PAGE = 80;
+const PAGE = 30;
 const DT_BATCH = 120; // items loaded per chronological scroll batch
 let datetimeItems = [];
 let dtStart = 0;
@@ -553,6 +558,11 @@ function viewAsks(convKey) {
   return (filter === "recycle" ? recycleAsks : asksByConv).get(convKey) || [];
 }
 function nodeLiked(n) { return !!(n && n.liked); }
+// Search in the favorites bag: only liked items become hits / item DOM.
+// Normal fav-bag browsing (empty search) is unchanged.
+function searchInFavOnlyLiked() {
+  return filter === "favorites" && parseSearch($("q").value).tokens.length > 0;
+}
 function findByNid(nid) {
   const id = String(nid || "");
   const kind = (id.startsWith("ans-") || id.startsWith("seo-")) ? "answer" : id.startsWith("onMsg-") ? "onMsg" : "ask";
@@ -1054,6 +1064,7 @@ function askBlock(r, list, tokens) {
     // 1. Collect OnMsg nodes
     if (isOnMsg(c)) {
       if ((showOnMsg || filter === "favorites") && inTime(askTs) && showAsk(c)) {
+        if (searchInFavOnlyLiked() && !nodeLiked(c)) return;
         const nid = "onMsg-" + (c.recordKey || c.localIndex);
         if (!hitMode || searchHitNids.has(nid) || inOpenedGap(nid, r.convKey) || inOpenedOlderHistory(nid, r.convKey)) {
           flatItems.push({
@@ -1082,7 +1093,7 @@ function askBlock(r, list, tokens) {
     }
 
     // 2. Collect Ask / Sei nodes independently (flat)
-    if ((showSei || showAsk || filter === "favorites") && showAsk(c) && showAskNode(c) && inTime(askTs)) {
+    if ((showSei || showAsk || filter === "favorites") && showAsk(c) && showAskNode(c) && inTime(askTs) && !(searchInFavOnlyLiked() && !nodeLiked(c))) {
       const askNid = askNidPrefix(c) + "-" + (c.recordKey || c.localIndex);
       const askHit = searchHitNids.has(askNid);
       const gapAsk = inOpenedGap(askNid, r.convKey);
@@ -1333,7 +1344,8 @@ function applySearchUnfold(r, tokens) {
 
 function collectHits(r, tokens) {
   const list = viewAsks(r.convKey);
-  function add(kind, idLabel, text, ts, isMessage) {
+  function add(kind, idLabel, text, ts, isMessage, likedNode) {
+    if (searchInFavOnlyLiked() && !nodeLiked(likedNode)) return;
     lineHits(text, tokens, !!isMessage).forEach(function (h) {
       hitList.push({
         urlid: r.id,
@@ -1347,18 +1359,53 @@ function collectHits(r, tokens) {
       });
     });
   }
-  if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r));
+  if (hayHasAny(pageHay(r), tokens)) add("meta-" + r.id, "url#" + r.id, pageHay(r), rowTs(r), false, null);
   if (showOnMsg) {
     liveAsks(list).filter((c) => isOnMsg(c) && inTime(c.ts)).forEach(function (c) {
-      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true);
+      add("onMsg-" + (c.recordKey || c.localIndex), "onMsg#" + c.localIndex, (c.text || ""), c.ts, true, c);
     });
   }
   list.filter((c) => !isOnMsg(c) && (inTime(c.ts) || (c.answers || []).some((a) => inTime(a.ts)))).forEach(function (c) {
-    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true);
+    if (showAskNode(c) && inTime(c.ts)) add(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex), (isSeenAsk(c) ? "sei#" : "ask#") + c.localIndex, c.text || "", c.ts, true, c);
     (c.answers || []).filter((a) => inTime(a.ts) && showAnsNode(a)).forEach(function (a) {
-      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true);
+      add(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex), (isSeenAns(a) ? "seo#" : "ans#") + c.localIndex + "." + (a.localIndex == null ? "?" : a.localIndex), a.text || "", a.ts, true, a);
     });
   });
+}
+
+function recentCount(ck) {
+  const since = Date.now() - 24 * 3600 * 1000;
+  const list = viewAsks(ck) || [];
+  let n = 0;
+
+  // newest → oldest
+  for (let i = list.length - 1; i >= 0; i--) {
+    const c = list[i];
+    const cTs = c.ts || 0;
+
+    // whole ask is already older than 24h → everything before it is too
+    if (cTs < since && !(c.answers || []).some(a => (a.ts || 0) >= since)) break;
+
+    if (cTs >= since) n++;
+
+    const ans = c.answers || [];
+    for (let j = ans.length - 1; j >= 0; j--) {
+      if ((ans[j].ts || 0) >= since) n++;
+      else break;   // answers are also oldest-first
+    }
+  }
+  return n;
+}
+function recentCount2(ck) {
+  const since = Date.now() - 24 * 3600 * 1000;
+  let n = 0;
+  (viewAsks(ck) || []).forEach(function (c) {
+    if ((c.ts || 0) >= since) n++;
+    (c.answers || []).forEach(function (a) {
+      if ((a.ts || 0) >= since) n++;
+    });
+  });
+  return n;
 }
 
 function rowHtml(r) {
@@ -1375,6 +1422,7 @@ function rowHtml(r) {
   const chatBtns =
     '<button class="chat-unfold-all" data-ck="' + esc(r.convKey) + '" type="button" title="Create and show every item in this chat">ua</button>' +
     '<button class="chat-unfold-existing" data-ck="' + esc(r.convKey) + '" type="button" title="Show items already created for this chat">ue</button>' +
+    '<button class="chat-unfold-fav" data-ck="' + esc(r.convKey) + '" type="button" title="Unfold liked items in this chat">uf</button>' +
     '<button class="chat-unfold-range" data-ck="' + esc(r.convKey) + '" type="button" title="Unfold a range of items (e.g. 9:18,-17:-8)">ur</button>' +
     '<button class="chat-fold" data-ck="' + esc(r.convKey) + '" type="button" title="Hide this chat\'s items">Fold</button>';
   const detail = (tokens.length || forceAll || forceAllActive) && show
@@ -1387,7 +1435,9 @@ function rowHtml(r) {
       '<label class="chat-title-lock-label" title="Prevent platform sync from replacing this title"><input class="chat-title-lock" type="checkbox" data-title-lock="1" data-ck="' + esc(r.convKey) + '"' + (r.titleLocked ? ' checked' : '') + '>Lock</label></span>' +
       esc(r.title || "") + '</td>' +
     '<td title="' + esc(r.url) + '">' + esc(r.conversationId || r.url || "") + "</td>" +
-    "<td>" + (all.length || r.askCount || 0) + "</td><td>" + r.id + "</td></tr>" + detail;
+    "<td>" + (all.length || r.askCount || 0) +
+    ((function () { const recent = recentCount(r.convKey); return recent ? " · " + recent + " in 24h" : ""; })()) +
+    "</td><td>" + r.id + "</td></tr>" + detail;
 }
 
 function buildGlobalChronologicalIndex() {
@@ -1427,6 +1477,9 @@ function buildGlobalChronologicalIndex() {
     globalIndexByNid.set(entry.nid, index);
     globalNidByIndex.set(index, entry.nid);
   });
+  
+  timeIndex = entries.map(function (e) { return { nid: e.nid, ts: e.ts }; });
+  
   updateGlobalNavSlider(globalIndexByNid.get(String(selectedNid || "")) || 1);
   updateExistingTimeNavSlider();
 }
@@ -1519,7 +1572,7 @@ function drawExistingTimeHitStrip(items) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!total) return;
+  //if (!total) return;
 
   for (let i = 0; i < total; i++) {
     const color = !hasKeywordSearch
@@ -1542,9 +1595,14 @@ function updateExistingTimeNavSlider2() {
 //  ---if using this , when 'unfold all'  for a chat , it will induce a race condition. 
   const slider = $("existingTimeNavSlider");
   const count = $("existingTimeNavSliderCount");
-  if (!slider || !count) return;
+  //if (!slider || !count) return;
+  //if (!slider || !count) return;
+  if (!slider ) return;
  
   
+  slider.disabled = 0;
+  //const items = getExistingTimeNavigationItems();
+  //lastsorteditems = items; 
   //drawExistingTimeHitStrip(lastsorteditems);
   
   
@@ -1565,8 +1623,11 @@ function updateExistingTimeNavSlider() {
   console.log ("updateExistingTimeNavSlider is called ")
   const slider = $("existingTimeNavSlider");
   const count = $("existingTimeNavSliderCount");
-  if (!slider || !count) return;
+  //if (!slider || !count) return;
+  if (!slider ) return;
   const items = getExistingTimeNavigationItems();
+  items;
+   console.log ("in updateExistingTimeNavSlider assign to lastsorteditems ")
     lastsorteditems = items;
   drawExistingTimeHitStrip(items);
   const total = items.length;
@@ -2055,39 +2116,46 @@ function jumpExistingItem(delta) {
 }
 
 function jumpExistingByTime(delta) {
+    if (dirtyflag1)  updateExistingTimeNavSlider();
+    
+    if (dirtyflag1) dirtyflag1 = false; 
   const items = getExistingTimeNavigationItems();
   if (!items.length) {
     //updateExistingTimeNavSlider();
     return;
   }
   let idx = items.findIndex(function (item) { return item.nid === String(selectedNid || ""); });
-  if (idx < 0) {
+     if (idx < 0) idx = 0;
+  //else idx = (idx + delta + items.length) % items.length;
+   //if (idx < 0) idx = 0;
+  if (0) if (idx < 0) {
     const body = middleMode === "item" ? $("dateTimeView") : $("titleView");
     const selectedEl = body && body.querySelector(".ptt-selected[data-nid], tr.ptt-selected[data-nid]");
     if (selectedEl) idx = items.findIndex(function (item) { return item.nid === String(selectedEl.dataset.nid || ""); });
   }
+
   if (idx < 0) {
     $("status").textContent = "Select an indexed item first.";
-    if (dirtyflag1)  updateExistingTimeNavSlider();
-    
-    if (dirtyflag1) dirtyflag1 = false; 
     return;
   }
-  const targetIndex = idx + (delta < 0 ? -1 : 1);
+  
+  
+  
+  const step = delta < 0 ? -1 : 1;
+const targetIndex = (idx + step + items.length) % items.length;
+  //const targetIndex = idx + (delta < 0 ? -1 : 1);
   if (targetIndex < 0 || targetIndex >= items.length) {
     $("status").textContent = "No further existing item in time order.";
-       if (dirtyflag1)  updateExistingTimeNavSlider();
-    
-    if (dirtyflag1) dirtyflag1 = false; 
+ 
     return;
   }
   const target = items[targetIndex];
+  
+  
   revealExistingItem(target.el);
   const selected = selectItemByNid(target.nid, true, "head");
   if (!selected) $("status").textContent = "Could not focus existing item " + target.nid + ".";
-    if (dirtyflag1)  updateExistingTimeNavSlider();
-    
-    if (dirtyflag1) dirtyflag1 = false; 
+ 
 }
 
 function updateHeaderIndicators() {
@@ -2130,7 +2198,10 @@ function renderSlice(reset) {
   const tb = $("titleView");
   if (reset) { shown = 0; tb.innerHTML = ""; }
   const next = matched.slice(shown, shown + PAGE);
-  if (next.length) tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+  if (next.length) {
+    tb.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+    dirtyflag1 = true;
+  }
   if (0) next.forEach(function (r) {
     const index = matched.indexOf(r);
     if (index >= 0) insertTitleSessionAtSearchPosition(index);
@@ -2180,6 +2251,38 @@ function applyEditedText(recordKey, kind, text) {
 
 // Refresh only the edited message inside its existing three-line PTT node.
 // Keep chat metadata, item metadata, tree controls, menu and node identity intact.
+
+// Update only the liked star and the 3-dots menu button on an existing node.
+function refreshLikedStateInNode(nodeEl, dotsBtn, liked) {
+  if (!nodeEl || !dotsBtn) return;
+  const menu = dotsBtn.parentElement && dotsBtn.parentElement.querySelector(".ptt-menu");
+  if (menu) {
+    const btn = menu.querySelector(".ptt-like, .ptt-unlike");
+    if (btn) {
+      btn.className = liked ? "ptt-unlike" : "ptt-like";
+      btn.textContent = liked ? "Unlike" : "Like";
+    }
+  }
+  dotsBtn.dataset.liked = liked ? "1" : "0";
+
+  const row = nodeEl.querySelector(":scope > .ptt-row");
+  if (row) {
+    let star = row.querySelector(".ptt-like-mark");
+    if (liked) {
+      if (!star) {
+        star = document.createElement("span");
+        star.className = "ptt-like-mark";
+        star.title = "liked";
+        star.textContent = "\u2605";
+        const meta = row.querySelector(".ptt-item-meta") || row;
+        meta.prepend(star);
+      }
+    } else if (star) {
+      star.remove();
+    }
+  }
+}
+
 function refreshEditedMessageInNode(nodeEl, dotsBtn, text) {
   if (!nodeEl) return;
   const nid = String(nodeEl.dataset.nid || (dotsBtn && dotsBtn.dataset.nid) || "");
@@ -2294,9 +2397,21 @@ function seek(q) {
       } else if (detail) {
         openChats.add(ck);
         detail.hidden = false;
-        detail.querySelectorAll(".ptt-node").forEach(function (node) {
-          node.hidden = false;
-          if (node.style.display === "none") node.style.display = "";
+        const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+        const replace = $("replaceExistingNid") && $("replaceExistingNid").checked;
+        const hits = hitList.filter(function (h) { return String(h.convKey) === ck; });
+        hits.forEach(function (h) {
+          const nid = String(h.nid);
+          if (searchInFavOnlyLiked()) {
+            const hitNode = findByNid(nid);
+            if (!hitNode || !hitNode.node || !nodeLiked(hitNode.node)) return;
+          }
+          const existing = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+          if (existing) {
+            if (!replace) return;          // option 1: keep each data-nid once
+            existing.remove();             // option 2: drop old, add fresh
+          }
+          if (tree) insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, parsed.tokens), h.ts || 0);
         });
       } else if (parsed.tokens.length) {
         // Chat is entering this bag with no detail yet. Create its hits once.
@@ -2639,6 +2754,30 @@ document.addEventListener("change", async function (e) {
   $("status").textContent = checkbox.checked ? "Conversation title locked." : "Conversation title unlocked.";
 });
 
+
+function refreshChatTitle(ck, title) {
+  const rec = rows.find(function (r) { return String(r.convKey) === String(ck); });
+  if (rec) rec.title = title;
+  const matchedRec = matched.find(function (r) { return String(r.convKey) === String(ck); });
+  if (matchedRec && matchedRec !== rec) matchedRec.title = title;
+
+  document.querySelectorAll('button.chat-title-edit[data-ck="' + CSS.escape(ck) + '"]').forEach(function (btn) {
+    const td = btn.closest("td");
+    if (!td) return;
+    td.title = title;
+    const b = td.querySelector(":scope > b");
+    if (b) {
+      b.textContent = title;
+      return;
+    }
+    const controls = btn.closest(".chat-title-controls");
+    let n = controls && controls.nextSibling;
+    while (n && n.nodeType !== 3) n = n.nextSibling;
+    if (n) n.nodeValue = title;
+    else td.appendChild(document.createTextNode(title));
+  });
+}
+
 // Delegate from the document so Read more / Show less works in both panes.
 document.addEventListener("click", function (e) {
   const titleEdit = e.target.closest("button[data-title-edit][data-ck]");
@@ -2652,13 +2791,13 @@ document.addEventListener("click", function (e) {
     if (edited === null) return;
     const title = edited.trim();
     if (!title) { $("status").textContent = "Title was not changed: title cannot be empty."; return; }
-    chrome.runtime.sendMessage({ type: "set-conversation-title", convKey: ck, title: title }, async function (result) {
+    chrome.runtime.sendMessage({ type: "set-conversation-title", convKey: ck, title: title }, function (result) {
       const err = chrome.runtime.lastError;
       if (err || !result || !result.ok) {
         $("status").textContent = "Title edit failed: " + (err ? err.message : (result && result.error) || "conversation not found");
         return;
       }
-      await loadLazy();
+      refreshChatTitle(ck, title);
       $("status").textContent = "Conversation title saved.";
     });
     return;
@@ -2750,7 +2889,14 @@ document.addEventListener("click", function (e) {
       const again = findByNid(nid);
       if (again && again.node) again.node.liked = liked;
       if (ck) openChats.add(ck);
-      seek($("q").value);
+      // only refresh this node (and any other rendered copy of the same nid)
+      document.querySelectorAll('[data-nid="' + CSS.escape(nid) + '"]').forEach(function (el) {
+        const btn = el.querySelector(".ptt-dots");
+        refreshLikedStateInNode(el, btn || dotsBtn, liked);
+      });
+      if (!document.querySelector('[data-nid="' + CSS.escape(nid) + '"]')) {
+        refreshLikedStateInNode(nodeEl, dotsBtn, liked);
+      }
       $("status").textContent = err
         ? ("Like not saved: " + err.message)
         : ((liked ? "Liked " : "Unliked ") + nid + (res && res.updated === false ? " (not in DB)" : ""));
@@ -2855,6 +3001,54 @@ document.addEventListener("click", function (e) {
     detail.querySelectorAll(".ptt-node").forEach(function (node) {
       node.hidden = false;
       if (node.style.display === "none") node.style.display = "";
+    });
+    return;
+  }
+
+  const unfoldFavBtn = e.target.closest(".chat-unfold-fav");
+  if (unfoldFavBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const ck = String(unfoldFavBtn.dataset.ck || "");
+    if (!ck) return;
+    openChats.add(ck);
+
+    const tokens = parseSearch($("q").value).tokens;
+    const bar = document.querySelector('#titleView tr[data-id][data-ck="' + CSS.escape(ck) + '"]');
+    let detail = document.querySelector('#titleView tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
+
+    if (!detail && bar) {
+      const session = matched.find(function (r) { return String(r.convKey) === ck; }) || sessionForConversationKey(ck);
+      if (session) {
+        bar.insertAdjacentHTML("afterend",
+          '<tr class="cmt-row" data-ck="' + esc(ck) + '"><td colspan="6">' +
+          askBlock(session, viewAsks(ck), tokens) + "</td></tr>");
+        detail = bar.nextElementSibling;
+      }
+    }
+    if (!detail) return;
+    detail.hidden = false;
+
+    const likedNids = [];
+    (viewAsks(ck) || []).forEach(function (c) {
+      if (nodeLiked(c)) likedNids.push(askNidPrefix(c) + "-" + (c.recordKey || c.localIndex));
+      (c.answers || []).forEach(function (a) {
+        if (nodeLiked(a)) likedNids.push(answerNidPrefix(a) + "-" + (a.recordKey || a.localIndex));
+      });
+    });
+
+    const tree = detail.querySelector(".ptt-tree") || detail.querySelector("td");
+    likedNids.forEach(function (nid) {
+      let node = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+      if (!node && tree) {
+        const hit = findByNid(nid);
+        insertNidTimestampOrdered(tree, nodeHtmlFor(nid, ck, tokens), (hit && hit.node && hit.node.ts) || 0);
+        node = detail.querySelector('.ptt-node[data-nid="' + CSS.escape(nid) + '"]');
+      }
+      if (node) {
+        node.hidden = false;
+        if (node.style.display === "none") node.style.display = "";
+      }
     });
     return;
   }
@@ -4091,6 +4285,7 @@ const newest = globalNidByIndex.get(globalNidByIndex.size);
  });
 if (0) $("globalGotoBtn").addEventListener("click", function () { 
 if (!globalNidByIndex.size) buildGlobalChronologicalIndex();
+dirtyflag1 = true;
   const newest = globalNidByIndex.get(globalNidByIndex.size);
   if (!newest) {
     $("status").textContent = "No indexed items.";
@@ -4290,7 +4485,7 @@ let flickerTimer = null;
 function flickerShort() {
   clearTimeout(flickerTimer);
   const el = $("status");
-  const msg = "search pattern string length leq 3, need to press enter key";
+  const msg = "search pattern string length leq 203, need to press enter key";
   el.textContent = msg;
   let n = 0;
   const tick = function () {
@@ -4330,8 +4525,8 @@ $("rawSearch").addEventListener("change", function () {
 $("q").addEventListener("input", function () {
   clearTimeout(searchTimer);
   const n = patternLen($("q").value);
-  if (n <= 3 && n >= 1) { flickerShort(); return; }
-  if (n > 3 || n === 0) searchTimer = setTimeout(function () { seek($("q").value); }, 500);
+  if (n <= 203 && n >= 1) { flickerShort(); return; }
+  if (n > 203 || n === 0) searchTimer = setTimeout(function () { seek($("q").value); }, 500);
 });
 $("q").addEventListener("keydown", function (e) {
   if (e.key !== "Enter") return;
@@ -4537,6 +4732,7 @@ $("clearAllBtn").onclick = function () {
   renderedCks.clear();
   const body = $("titleView");
   if (body) {
+  //body.querySelectorAll("tr[data-id][data-ck]").forEach(row => row.remove());
     body.querySelectorAll(".ptt-node[data-nid]").forEach(function (node) { node.remove(); });
     body.querySelectorAll("tr.cmt-row").forEach(function (detail) { detail.remove(); });
   }
@@ -5490,4 +5686,83 @@ document.addEventListener("keydown", function (e) {
     e.preventDefault();          // optional: stop the normal page scroll
     fillHolesInChatBars(20);
   }
+});
+
+// this is the brutal search method.
+if (0) $("goTimePointBtn").addEventListener("click", function () {
+  const raw = ($("timePointInput").value || "").trim();
+  const target = Date.parse(raw.replace(" ", "T"));
+  if (!Number.isFinite(target)) { $("status").textContent = "Enter a time like 2026-11-15 12:00."; return; }
+  if (!globalNidByIndex.size) buildGlobalChronologicalIndex();
+
+  let bestNid = null, bestDist = Infinity;
+  globalNidByIndex.forEach(function (nid) {
+    const hit = findByNid(nid);
+    const ts = hit && hit.node ? (hit.node.ts || 0) : 0;
+    const d = Math.abs(ts - target);
+    if (d < bestDist) { bestDist = d; bestNid = nid; }
+  });
+  if (!bestNid) { $("status").textContent = "No indexed items."; return; }
+
+  const tokens = parseSearch($("q").value).tokens;
+  ensureTitleNidRendered(bestNid, tokens);
+  revealChat(findConvForNid(bestNid));
+  selectItemByNid(bestNid, true, "head");
+  selectedNid = bestNid;
+  $("status").textContent = "Closest item to " + raw + ": " + bestNid + " (" + Math.round(bestDist / 1000) + "s off).";
+});
+
+
+
+
+(function initTimePointScroll() {
+  const input = $("timePointInput");
+  if (!input) return;
+
+  function fmt(ts) {
+    const d = new Date(ts);
+    const p = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+      + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  input.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    let base = Date.parse((input.value || "").trim().replace(" ", "T"));
+    if (!Number.isFinite(base)) base = Date.now();
+    const step = e.deltaY > 0 ? -3600000 : 3600000;   // down = -1h, up = +1h
+    input.value = fmt(base + step);
+  }, { passive: false });
+})();
+
+
+function closestByTime(target) {
+  if (!timeIndex.length) return null;
+  let lo = 0, hi = timeIndex.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timeIndex[mid].ts < target) lo = mid + 1;
+    else hi = mid;
+  }
+  const next = timeIndex[lo];
+  const prev = timeIndex[lo - 1];
+  if (!prev) return next.nid;
+  return (target - prev.ts) <= (next.ts - target) ? prev.nid : next.nid;
+}
+
+$("goTimePointBtn").addEventListener("click", function () {
+  const raw = ($("timePointInput").value || "").trim();
+  const target = Date.parse(raw.replace(" ", "T"));
+  if (!Number.isFinite(target)) { $("status").textContent = "Enter a time like 2026-11-15 12:00."; return; }
+  if (!globalNidByIndex.size) buildGlobalChronologicalIndex();
+
+  const bestNid = closestByTime(target);
+  if (!bestNid) { $("status").textContent = "No indexed items."; return; }
+
+  const tokens = parseSearch($("q").value).tokens;
+  ensureTitleNidRendered(bestNid, tokens);
+  revealChat(findConvForNid(bestNid));
+  selectItemByNid(bestNid, true, "head");
+  selectedNid = bestNid;
+  $("status").textContent = "Closest item to " + raw + ": " + bestNid + ".";
 });
