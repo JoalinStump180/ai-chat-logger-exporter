@@ -29,8 +29,12 @@
     
     #sideDelete {
   display: none !important;
+} 
+
+@keyframes statusBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
-    
     
     #qHist { position: absolute; left: 0; right: 0; top: 24px; z-index: 20; max-height: 220px; overflow: auto; background: #fff; border: 1px solid #adadad; display: none; }
     #qHist div { padding: 4px 8px; cursor: pointer; }
@@ -170,8 +174,45 @@
     /* Title-only cleanup: lower hit-results pane is intentionally disabled. */
     #hSplit, #hitsPane { display: none !important; }
     .hits tr.on { background: #cce8ff; }
+    
+    
+    /*
     .status { height: 22px; min-height: 22px; box-sizing: border-box; border-top: 1px solid #c8c8c8; background: #f3f3f3; padding: 3px 8px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .status::after { content: "  |  " attr(data-selection-status); }
+    */
+    
+    
+    .status {
+  height: auto !important;
+  min-height: 22px;
+  max-height: none;
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.3;
+  padding: 3px 8px;
+}
+.status::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d00;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: statusBlink 1s steps(1) infinite;
+}
+.status::after {
+  content: "\A" attr(data-selection-status);
+  
+  display: block;
+}
+@keyframes statusBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+    
+    
     .empty { padding: 24px; color: #777; }
   
     /* Tab 2: compact settings/control shelf. Existing controls are moved, not cloned. */
@@ -183,6 +224,19 @@
     .side-settings > label input[type=checkbox] { flex: 0 0 auto; }
     .side-settings > label select { min-width: 0; width: 100%; height: 24px; }
     .side-settings > button { box-sizing: border-box; width: 100%; min-height: 25px; height: auto; padding: 3px 4px; white-space: normal; overflow-wrap: anywhere; font-size: 11px; }
+
+    /* Action pane */
+    #actionPane { display: none; flex: 1; flex-direction: column; min-height: 0; background: #fff; }
+    body.mode-actions #actionPane { display: flex; }
+    body.mode-actions .listwrap, body.mode-actions #hSplit, body.mode-actions #hitsPane, body.mode-actions #thfavPane { display: none !important; }
+    .action-banner { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: #f7f7f7; border-bottom: 1px solid #ddd; }
+    .action-banner input[type="search"], .action-banner input[type="text"] { height: 24px; border: 1px solid #adadad; padding: 0 6px; box-sizing: border-box; }
+    .action-banner input[type="search"] { flex: 1 1 180px; min-width: 140px; }
+    .action-list { flex: 1; overflow: auto; padding: 8px; }
+    .action-node { margin-bottom: 8px; padding: 6px 8px; border: 1px solid #e0e0e0; border-radius: 3px; background: #fff; }
+    .action-node.sel { background: #cce8ff; border-color: #8bb8e8; }
+    .action-node .ptt-txt { white-space: pre-wrap; }
+
 </style>
 
 
@@ -205,11 +259,15 @@
   </span>
 </label>
 <div id="tokenBar"></div>
+<label title="Prepend newly arriving chats and items to the top of the title pane">
+  <input id="prependNew" type="checkbox" checked/> Prepend new
+</label>
 <button id="clearAllBtn" title="Clear the search box and remove every existing item" type="button">Clear all</button>
 <button id="forceSearch" title="Treat every visible item's first line as a hit, even with an empty search" type="button">Force search</button>
 <span id="seek" style="min-width:160px;color:#555;">Seek 0%</span>
 <label title="Treat the entire search box as one literal, case-insensitive string; quotes and URLID are ordinary characters"><input id="rawSearch" type="checkbox"/> Raw literal</label>
 <label title="All tokens must be present in the target text"><input id="searchAnd" type="checkbox"/> And</label>
+<label title="When a detail row already exists, replace existing data-nid nodes instead of keeping them"><input id="replaceExistingNid" type="checkbox"/> Replace existing nid</label>
 <label title="Any one token is enough"><input checked="" id="searchOr" type="checkbox"/> Or</label>
 
 
@@ -255,6 +313,8 @@
 </div>
 <button id="globalGotoBtn" title="Jump to the indexed item (nearest available item in datetime pane)">Goto</button>
 <button id="globalGoAllBtn" title="Unfold the target chat session, then jump to the indexed item">Go All</button>
+<input id="timePointInput" placeholder="2026-11-15 12:00" style="width:140px" />
+<button id="goTimePointBtn" type="button">Go timepoint</button>
 <button id="foldAllChatsBtn" title="Fold every chat session in the current result" type="button">Fold all chats</button>
 <button id="reloadBtn">Refresh</button>
 <span class="spacer"></span>
@@ -317,6 +377,7 @@
 <div data-filter="grok">Grok</div>
 <div data-filter="favorites">favorites</div>
 <div data-filter="recycle">recycle</div>
+<div data-filter="actions">Actions</div>
 </div>
 </section>
 <section class="side-tab-panel side-settings-panel" id="sidePanel2" role="tabpanel"><div class="side-settings"><label title="Hide the bottom hit-results pane and skip rendering it during searches"><input id="invalidateLowerPane" type="checkbox"/> Invalidate lower pane</label><label title="Show chat info, node info and message text inline within each PTT node"><input id="pttSingleLine" type="checkbox"/> pttSingleLine</label><label title="Show or hide chat update time and chat title for all PTT nodes"><input id="pttShowChatInfo" type="checkbox" checked/> pttShowChatInfo</label><span class="path">extension:\aiChatAskLog\records</span><label class="line-filter" title="Search message text only within these line ranges">searchFirstN <input aria-label="Search first N lines" id="searchFirstN" min="0" placeholder="—" step="1" type="number"/></label><label class="line-filter" title="Search message text only within these line ranges">searchLastN <input aria-label="Search last N lines" id="searchLastN" min="0" placeholder="—" step="1" type="number"/></label><label class="line-filter" title="Only include message records with at least this many lines">minLines <input aria-label="Minimum message line count" id="minLines" min="0" placeholder="—" step="1" type="number"/></label><label class="line-filter" title="Only include message records with at most this many lines">maxLines <input aria-label="Maximum message line count" id="maxLines" min="0" placeholder="—" step="1" type="number"/></label><label>foldM <input aria-label="First lines to keep" id="foldM" min="0" step="1" type="number" value="3"/></label><label>foldN <input aria-label="Last lines to keep" id="foldN" min="0" step="1" type="number" value="3"/></label><label title="Live typed asks, and old untyped rows"><input id="showOnMsg" type="checkbox"/> showOnMsg <span id="showOnMsgLabel">off</span></label><label title="Seen asks"><input id="showSei" type="checkbox"/> showSei <span id="showSeiLabel">off</span></label><label title="Seen answers"><input id="showSeo" type="checkbox"/> showSeo <span id="showSeoLabel">off</span></label><label title="Manual-sync asks"><input id="showAsk" type="checkbox"/> showAsk <span id="showAskLabel">off</span></label><label title="Manual-sync answers"><input id="showAns" type="checkbox"/> showAns <span id="showAnsLabel">off</span></label><label>liveSort <select id="liveSort">
@@ -385,7 +446,7 @@ help: in each chat infobar:  'ua' - 'unfold all'  ;'ue' - 'unfold exsiting'  ;'u
 </thead>
 <tbody id="titleView"></tbody>
 </table>
-<div class="empty" hidden="" id="empty">No items match. press pagedown key to list other unlisted chat in this bag \n <br>
+<div class="empty" hidden="" id="empty">No items match. press pagedown or ctrl+8  ctrl+* key to list other unlisted chat in this bag \n <br>
 kim:  if an chat 's at least one item is shown -this chat will be excluded when appending new search hit<br>
 right-click in the left pane , to create a new bag , and right-click that bag icon,  'config' option to read the help.
 <br>
@@ -396,6 +457,28 @@ right-click in the left pane , to create a new bag , and right-click that bag ic
 <thead><tr><th colspan="6" style="background:#fff3cd">Favorites (liked items only)<button id="thfavClose" type="button" onclick="document.getElementById('thfavPane').classList.remove('on')">Close</button></th></tr></thead>
 <tbody id="thfavView"></tbody>
 </table>
+</div>
+<div id="actionPane">
+  <div class="action-banner">
+    <input id="actionQ" type="search" placeholder="highlight in action nodes" />
+    <label title="Show only action items that match the search"><input id="actionOnlyHits" type="checkbox" /> only hits</label>
+    <div class="twrap">
+      <label>from</label>
+      <input id="actionFrom" type="text" placeholder="YYYY-MM-DD" />
+      <button id="actionFromCal" type="button">cal</button>
+      <input id="actionFromPicker" type="date" hidden />
+    </div>
+    <div class="twrap">
+      <label>to</label>
+      <input id="actionTo" type="text" placeholder="YYYY-MM-DD" />
+      <button id="actionToCal" type="button">cal</button>
+      <input id="actionToPicker" type="date" hidden />
+    </div>
+    <button id="actionPrev" type="button">Prev action</button>
+    <button id="actionNext" type="button">Next action</button>
+    <span id="actionStatus" style="color:#555;margin-left:8px;"></span>
+  </div>
+  <div class="action-list" id="actionList"></div>
 </div>
 <div class="hsplit" id="hSplit"></div>
 <div class="hits" id="hitsPane">
@@ -417,7 +500,10 @@ right-click in the left pane , to create a new bag , and right-click that bag ic
 </div>
 </div>
 </div>
-<div class="status" id="status">0 items</div>
+<div class="status" id="status">
+<span id="statusDot" class="status-dot"></span>
+  <span id="statusText">0 items</span>
+  </div>
 <script src="db.js"></script>
 <script src="explorer2.js"></script>
 </body>
