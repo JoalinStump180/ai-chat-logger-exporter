@@ -4433,7 +4433,8 @@ $("prevHit").onclick = function () {
     for (let i = 0; i < list.length; i++) {
       if ((list[i].ts || 0) <= ts && list[i].nid !== selectedNid) prev = list[i];
       else if ((list[i].ts || 0) > ts) break;
-    }
+    }	
+	console.log('in prevhit onclick prev is ',prev)
     jumpToHit(prev);
     return;
   }
@@ -5915,13 +5916,51 @@ async function refreshActionPane() {
   if (actionCursor >= actionFiltered.length) actionCursor = actionFiltered.length - 1;
 }
 
+
+function selectActionAt(idx, fillGlobalInput = true) {
+  const list = $("actionList");
+  if (!list || idx < 0 || idx >= actionFiltered.length) return;
+  actionCursor = idx;
+  list.querySelectorAll(".action-node").forEach(function (n) {
+    n.classList.toggle("sel", Number(n.dataset.idx) === actionCursor);
+  });
+
+  const rec = actionFiltered[actionCursor];
+  const nid = rec && rec.nid ? String(rec.nid) : "";
+  const ck = rec && rec.convKey ? String(rec.convKey) : "";
+  if (!nid) {
+    if ($("actionStatus")) $("actionStatus").textContent = "This action has no item NID.";
+    return;
+  }
+
+  if (ck) nidToConvKey.set(nid, ck);
+  //selectedNid = nid;
+
+  if (!globalIndexByNid.size) buildGlobalChronologicalIndex();
+  const gIdx = globalIndexByNid.get(nid);
+  const indexInput = $("globalIndexInput");
+
+  if (fillGlobalInput && indexInput) {
+    if (gIdx != null) {
+      indexInput.value = String(gIdx);
+    } else {
+      indexInput.value = "";
+      if ($("actionStatus")) {
+        $("actionStatus").textContent = "Item " + nid + " is not in the current global index (check item-type checkboxes).";
+      }
+    }
+  }
+}
 function renderActionList(tokens) {
   const list = $("actionList");
   if (!list) return;
   list.innerHTML = actionFiltered.map(function (rec, i) {
+    const nid = String(rec.nid || "");
+    const ck = String(rec.convKey || "");
+    if (nid && ck) nidToConvKey.set(nid, ck);
     const raw = formatActionNode(rec);
     const html = highlightText(raw, tokens || []);
-    return '<div class="action-node ptt-node" data-idx="' + i + '" data-nid="' + esc(rec.nid) + '">' +
+    return '<div class="action-node ptt-node" data-idx="' + i + '" data-nid="' + esc(nid) + '" data-ck="' + esc(ck) + '">' +
       '<div class="ptt-row"><div class="ptt-txt">' + html + '</div></div></div>';
   }).join("");
   if (actionCursor >= 0) {
@@ -5929,7 +5968,6 @@ function renderActionList(tokens) {
     if (el) el.classList.add("sel");
   }
 }
-
 function showActionPane() {
   document.body.classList.add("mode-actions");
   refreshActionPane();
@@ -5952,7 +5990,17 @@ seek = function (q) {
 // Bind action pane controls
 function bindActionControls() {
   const q = $("actionQ");
-  if (q) q.addEventListener("input", function () { refreshActionPane(); });
+  //if (q) q.addEventListener("input", function () { refreshActionPane(); });
+  if (q) {
+  q.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      refreshActionPane();
+    }
+  });
+}
+  
+  
   const only = $("actionOnlyHits");
   if (only) only.addEventListener("change", function () { refreshActionPane(); });
   ["actionFrom", "actionTo"].forEach(function (id) {
@@ -5996,10 +6044,22 @@ function bindActionControls() {
   if (list) list.addEventListener("click", function (e) {
     const node = e.target.closest(".action-node");
     if (!node) return;
-    actionCursor = Number(node.dataset.idx);
-    list.querySelectorAll(".action-node").forEach(function (n) { n.classList.toggle("sel", n === node); });
+   // actionCursor = Number(node.dataset.idx);
+    //list.querySelectorAll(".action-node").forEach(function (n) { n.classList.toggle("sel", n === node); });
+    const idx = Number(node.dataset.idx);
+    if (!Number.isInteger(idx)) return;
+    selectActionAt(idx, true);
   });
 }
+
+
+
+
+
+
+
+
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", bindActionControls);
 } else {
