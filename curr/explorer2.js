@@ -1033,7 +1033,9 @@ function pttNode(opts) {
   const menu = opts.recordKey
     ? '<span class="ptt-more"><button type="button" class="ptt-dots" data-nid="' + esc(opts.nid || "") + '" data-rk="' + esc(opts.recordKey) + '" data-kind="' + esc(opts.storeKind || "ask") + '" data-liked="' + (liked ? "1" : "0") + '" data-text="' + esc(opts.editText || "") + '">\u22ee</button>' +
       '<span class="ptt-menu" hidden><button type="button" class="ptt-edit">Edit</button>' +
-      (liked ? '<button type="button" class="ptt-unlike">Unlike</button>' : '<button type="button" class="ptt-like">Like</button>') +
+        '<button type="button" class="ptt-like">Like</button>'+
+         (liked ? '<button type="button" class="ptt-unlike">Unlike</button>' :'')
+         +
       '<button type="button" class="ptt-del">Delete</button></span></span>'
     : "";
   const star = liked ? '<span class="ptt-like-mark" title="liked">\u2605</span>' : "";
@@ -2284,9 +2286,14 @@ function refreshLikedStateInNode(nodeEl, dotsBtn, liked) {
   if (menu) {
     const btn = menu.querySelector(".ptt-like, .ptt-unlike");
     if (btn) {
-      btn.className = liked ? "ptt-unlike" : "ptt-like";
-      btn.textContent = liked ? "Unlike" : "Like";
+      //btn.className = liked ? "ptt-unlike" : "ptt-like";
+      //btn.textContent = liked ? "Unlike" : "Like";
     }
+    
+    
+    // const btn2 = menu.querySelector(".ptt-unlike");
+    //if (btn2) btn2.textContent = '';
+    
   }
   dotsBtn.dataset.liked = liked ? "1" : "0";
 
@@ -3043,7 +3050,7 @@ document.addEventListener("click", function (e) {
     const bar = document.querySelector('#titleView tr[data-id][data-ck="' + CSS.escape(ck) + '"]');
     let detail = document.querySelector('#titleView tr.cmt-row[data-ck="' + CSS.escape(ck) + '"]');
 
-    if (!detail && bar) {
+  if (0)  if (!detail && bar) {
       const session = matched.find(function (r) { return String(r.convKey) === ck; }) || sessionForConversationKey(ck);
       if (session) {
         bar.insertAdjacentHTML("afterend",
@@ -3051,6 +3058,11 @@ document.addEventListener("click", function (e) {
           askBlock(session, viewAsks(ck), tokens) + "</td></tr>");
         detail = bar.nextElementSibling;
       }
+    }
+    if (!detail && bar) {
+      bar.insertAdjacentHTML("afterend",
+        '<tr class="cmt-row" data-ck="' + esc(ck) + '"><td colspan="6"><div class="ptt-tree"></div></td></tr>');
+      detail = bar.nextElementSibling;
     }
     if (!detail) return;
     detail.hidden = false;
@@ -6024,22 +6036,141 @@ function bindActionControls() {
   }
   bindCal("from");
   bindCal("to");
+  
+  
+  
+  
+  async function deleteActionById(id) {
+  if (id == null) return false;
+  const db = await openActionDb();
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction(ACTION_STORE, "readwrite");
+    const req = tx.objectStore(ACTION_STORE).delete(id);
+    req.onsuccess = function () { resolve(true); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+  
+  function clearActionSelection() {
+  actionCursor = -1;
+  const list = $("actionList");
+  if (list) {
+    list.querySelectorAll(".action-node.sel").forEach(function (n) {
+      n.classList.remove("sel");
+    });
+  }
+  const indexInput = $("globalIndexInput");
+  if (indexInput) indexInput.value = "";
+}
+  
+  const delBtn = $("actionDelBtn");
+if (delBtn) {
+  delBtn.addEventListener("click", async function () {
+    if (actionCursor < 0 || actionCursor >= actionFiltered.length) {
+      if ($("actionStatus")) $("actionStatus").textContent = "Select an action item first.";
+      return;
+    }
+    const target = actionFiltered[actionCursor];
+    if (!target || target.id == null) {
+      if ($("actionStatus")) $("actionStatus").textContent = "Selected action has no ID.";
+      return;
+    }
+    try {
+      await deleteActionById(target.id);
+      if (actionCursor >= actionFiltered.length - 1) {
+        actionCursor = Math.max(-1, actionFiltered.length - 2);
+      }
+      await refreshActionPane();
+      if (actionCursor >= 0 && actionFiltered.length) {
+        selectActionAt(actionCursor, true);
+      } else {
+        clearActionSelection();
+      }
+      if ($("actionStatus")) $("actionStatus").textContent = "Deleted action #" + target.id + ".";
+    } catch (err) {
+      if ($("actionStatus")) $("actionStatus").textContent = "Delete failed: " + (err && err.message ? err.message : String(err));
+    }
+  });
+}
+  
+  
+  
+  
+  
+  
+  
+  function stepActionHit (dir) {
+ 
+  const list = document.getElementById("actionList");
+  const nodes = Array.from(list.querySelectorAll(".action-node"));
+  if (!nodes.length) return null;
+
+  const start = (typeof actionCursor === "number" && actionCursor >= 0) ? actionCursor : -1;
+  for (let offset = 1; offset <= nodes.length; offset++) {
+    const idx = (start + dir * offset) % nodes.length;
+    if (nodes[idx].querySelector(".hit")) {
+      if (typeof actionCursor === "number") actionCursor = idx;
+      nodes.forEach((n, i) => n.classList.toggle("sel", i === idx));
+      nodes[idx].scrollIntoView({ block: "nearest" });
+      return { idx, el: nodes[idx] };
+    }
+  }
+  return null;
+}
+
+
+   $("actionHitPrev").addEventListener("click", function () {
+  
+  stepActionHit(-1);
+  })
+     $("actionHitNext").addEventListener("click", function () {
+  
+  stepActionHit(1);
+  })
+  
+  
+  
+  
+  
+  
+  
   const prev = $("actionPrev");
   const next = $("actionNext");
   if (prev) prev.addEventListener("click", function () {
     if (!actionFiltered.length) return;
     actionCursor = (actionCursor <= 0 ? actionFiltered.length - 1 : actionCursor - 1);
-    renderActionList(parseSearch($("actionQ").value).tokens);
+    //renderActionList(parseSearch($("actionQ").value).tokens);
+    
+    
+ 
+
+  
+  
+  
     const el = $("actionList").querySelector('[data-idx="' + actionCursor + '"]');
+        const idx = Number(el.dataset.idx);
+    if (!Number.isInteger(idx)) return;
+    selectActionAt(idx, true);
     if (el) el.scrollIntoView({ block: "nearest" });
   });
+  
+  
+  
   if (next) next.addEventListener("click", function () {
     if (!actionFiltered.length) return;
     actionCursor = (actionCursor >= actionFiltered.length - 1 ? 0 : actionCursor + 1);
-    renderActionList(parseSearch($("actionQ").value).tokens);
+    //renderActionList(parseSearch($("actionQ").value).tokens);
     const el = $("actionList").querySelector('[data-idx="' + actionCursor + '"]');
+            const idx = Number(el.dataset.idx);
+    if (!Number.isInteger(idx)) return;
+    selectActionAt(idx, true);
     if (el) el.scrollIntoView({ block: "nearest" });
   });
+  
+  
+  
+  
+  
   const list = $("actionList");
   if (list) list.addEventListener("click", function (e) {
     const node = e.target.closest(".action-node");

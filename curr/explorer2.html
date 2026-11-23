@@ -26,7 +26,11 @@
     }
     tbody td .ptt-label-wrap { max-width: 100%; }
     
-    
+    body.mode-actions #actionList .action-node .ptt-txt {
+    max-height: 180px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
     #sideDelete {
   display: none !important;
 } 
@@ -476,6 +480,10 @@ right-click in the left pane , to create a new bag , and right-click that bag ic
     </div>
     <button id="actionPrev" type="button">Prev action</button>
     <button id="actionNext" type="button">Next action</button>
+        <button id="actionHitPrev" type="button">actionHitPrev</button>
+    <button id="actionHitNext" type="button">actionHitNext</button>
+    <br>
+    <button id="actionDelBtn" type="button">actionDelBtn</button>
     <span id="actionStatus" style="color:#555;margin-left:8px;"></span>
   </div>
   <div class="action-list" id="actionList"></div>

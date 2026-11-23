@@ -1,0 +1,39 @@
+(() => {
+  const list = document.getElementById("actionList");
+  const nodes = Array.from(list.querySelectorAll(".action-node"));
+  if (!nodes.length) return null;
+
+  const start = (typeof actionCursor === "number" && actionCursor >= 0) ? actionCursor : -1;
+  for (let offset = 1; offset <= nodes.length; offset++) {
+    const idx = (start + offset) % nodes.length;
+    if (nodes[idx].querySelector(".hit")) {
+      if (typeof actionCursor === "number") actionCursor = idx;
+      nodes.forEach((n, i) => n.classList.toggle("sel", i === idx));
+      nodes[idx].scrollIntoView({ block: "nearest" });
+      return { idx, el: nodes[idx] };
+    }
+  }
+  return null;
+})();
+
+
+---hi   if (nodes[idx].querySelector(".hit")) { --do u mean , curr action bag impl is mark the hit item by a class=.hit  ?
+
+function stepActionHit (dir) {
+ 
+  const list = document.getElementById("actionList");
+  const nodes = Array.from(list.querySelectorAll(".action-node"));
+  if (!nodes.length) return null;
+
+  const start = (typeof actionCursor === "number" && actionCursor >= 0) ? actionCursor : -1;
+  for (let offset = 1; offset <= nodes.length; offset++) {
+    const idx = (start + dir * offset) % nodes.length;
+    if (nodes[idx].querySelector(".hit")) {
+      if (typeof actionCursor === "number") actionCursor = idx;
+      nodes.forEach((n, i) => n.classList.toggle("sel", i === idx));
+      nodes[idx].scrollIntoView({ block: "nearest" });
+      return { idx, el: nodes[idx] };
+    }
+  }
+  return null;
+}
