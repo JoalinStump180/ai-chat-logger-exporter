@@ -26,11 +26,19 @@
     }
     tbody td .ptt-label-wrap { max-width: 100%; }
     
-    
+    body.mode-actions #actionList .action-node .ptt-txt {
+    max-height: 180px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
     #sideDelete {
   display: none !important;
+} 
+
+@keyframes statusBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
-    
     
     #qHist { position: absolute; left: 0; right: 0; top: 24px; z-index: 20; max-height: 220px; overflow: auto; background: #fff; border: 1px solid #adadad; display: none; }
     #qHist div { padding: 4px 8px; cursor: pointer; }
@@ -170,8 +178,45 @@
     /* Title-only cleanup: lower hit-results pane is intentionally disabled. */
     #hSplit, #hitsPane { display: none !important; }
     .hits tr.on { background: #cce8ff; }
+    
+    
+    /*
     .status { height: 22px; min-height: 22px; box-sizing: border-box; border-top: 1px solid #c8c8c8; background: #f3f3f3; padding: 3px 8px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .status::after { content: "  |  " attr(data-selection-status); }
+    */
+    
+    
+    .status {
+  height: auto !important;
+  min-height: 22px;
+  max-height: none;
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.3;
+  padding: 3px 8px;
+}
+.status::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d00;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: statusBlink 1s steps(1) infinite;
+}
+.status::after {
+  content: "\A" attr(data-selection-status);
+  
+  display: block;
+}
+@keyframes statusBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+    
+    
     .empty { padding: 24px; color: #777; }
   
     /* Tab 2: compact settings/control shelf. Existing controls are moved, not cloned. */
@@ -188,14 +233,20 @@
     #actionPane { display: none; flex: 1; flex-direction: column; min-height: 0; background: #fff; }
     body.mode-actions #actionPane { display: flex; }
     body.mode-actions .listwrap, body.mode-actions #hSplit, body.mode-actions #hitsPane, body.mode-actions #thfavPane { display: none !important; }
-    .action-banner { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: #f7f7f7; border-bottom: 1px solid #ddd; }
+    .action-banner { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: #f7f7f7; border-bottom: 1px solid #ddd; 
+    
+
+    
+    }
     .action-banner input[type="search"], .action-banner input[type="text"] { height: 24px; border: 1px solid #adadad; padding: 0 6px; box-sizing: border-box; }
     .action-banner input[type="search"] { flex: 1 1 180px; min-width: 140px; }
     .action-list { flex: 1; overflow: auto; padding: 8px; }
     .action-node { margin-bottom: 8px; padding: 6px 8px; border: 1px solid #e0e0e0; border-radius: 3px; background: #fff; }
     .action-node.sel { background: #cce8ff; border-color: #8bb8e8; }
     .action-node .ptt-txt { white-space: pre-wrap; }
-
+.action-nav-slider { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-width: 180px; }
+.action-nav-slider input[type="range"] { flex: 1; min-width: 120px; }
+.action-nav-slider .range-count { min-width: 80px; text-align: right; color: #555; font-size: 12px; }
 </style>
 
 
@@ -435,10 +486,20 @@ right-click in the left pane , to create a new bag , and right-click that bag ic
     </div>
     <button id="actionPrev" type="button">Prev action</button>
     <button id="actionNext" type="button">Next action</button>
-    <span id="actionStatus" style="color:#555;margin-left:8px;"></span>
+        <button id="actionHitPrev" type="button">actionHitPrev</button>
+    <button id="actionHitNext" type="button">actionHitNext</button>
+    <br>
+    <button id="actionDelBtn" type="button">actionDelBtn</button>
+<span id="actionStatus" style="color:#555;margin-left:8px;"></span>
+    <div id="actionNavSliderWrap" style="display:flex;align-items:center;gap:8px;flex:1 0 100%;width:100%;box-sizing:border-box;">
+      <label for="actionNavSlider">Actions</label>
+      <input id="actionNavSlider" type="range" min="1" max="1" value="1" step="1" disabled style="flex:1;min-width:120px;" />
+      <span id="actionNavSliderCount" style="min-width:80px;text-align:right;color:#555;font-size:12px;">0 / 0</span>
+    </div>
   </div>
   <div class="action-list" id="actionList"></div>
 </div>
+
 <div class="hsplit" id="hSplit"></div>
 <div class="hits" id="hitsPane">
 <div class="hitwrap">
@@ -459,8 +520,11 @@ right-click in the left pane , to create a new bag , and right-click that bag ic
 </div>
 </div>
 </div>
-<div class="status" id="status">0 items</div>
+<div class="status" id="status">
+<span id="statusDot" class="status-dot"></span>
+  <span id="statusText">0 items</span>
+  </div>
 <script src="db.js"></script>
-<script src="explorer_action_1.js"></script>
+<script src="explorer2.js"></script>
 </body>
 </html>
