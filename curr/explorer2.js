@@ -5955,6 +5955,7 @@ function selectActionAt(idx, fillGlobalInput = true) {
   if (fillGlobalInput && indexInput) {
     if (gIdx != null) {
       indexInput.value = String(gIdx);
+      $("actionStatus").textContent = "Item " + nid + " ";
     } else {
       indexInput.value = "";
       if ($("actionStatus")) {
@@ -5962,6 +5963,7 @@ function selectActionAt(idx, fillGlobalInput = true) {
       }
     }
   }
+  updateActionNavSlider();
 }
 function renderActionList(tokens) {
   const list = $("actionList");
@@ -5999,6 +6001,23 @@ seek = function (q) {
   return _origSeek(q);
 };
 
+
+
+
+  function updateActionNavSlider() {
+  const slider = $("actionNavSlider");
+  const count = $("actionNavSliderCount");
+  if (!slider || !count) return;
+  const total = actionFiltered.length;
+  slider.min = total ? "1" : "0";
+  slider.max = String(Math.max(1, total));
+  slider.disabled = total === 0;
+  const pos = total && actionCursor >= 0 ? Math.min(total, actionCursor + 1) : 0;
+  slider.value = String(pos);
+  count.textContent = total ? pos + " / " + total : "0 / 0";
+}
+
+
 // Bind action pane controls
 function bindActionControls() {
   const q = $("actionQ");
@@ -6011,6 +6030,49 @@ function bindActionControls() {
     }
   });
 }
+
+  
+  const actionSlider = $("actionNavSlider");
+let actionSliderTimer = null;
+function jumpActionFromSlider() {
+  actionSliderTimer = null;
+  const total = actionFiltered.length;
+  if (!total) {
+    updateActionNavSlider();
+    return;
+  }
+  const pos = Math.max(1, Math.min(total, Number(actionSlider.value) || 1));
+  const idx = pos - 1;
+  selectActionAt(idx, true);
+  const el = $("actionList") && $("actionList").querySelector('[data-idx="' + idx + '"]');
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+if (actionSlider) {
+  actionSlider.addEventListener("input", function () {
+    const total = actionFiltered.length;
+    const pos = total ? Math.max(1, Math.min(total, Number(actionSlider.value) || 1)) : 0;
+    if ($("actionNavSliderCount")) {
+      $("actionNavSliderCount").textContent = total ? pos + " / " + total : "0 / 0";
+    }
+    if (actionSliderTimer !== null) clearTimeout(actionSliderTimer);
+    //if (total) actionSliderTimer = setTimeout(jumpActionFromSlider, 200);
+    if (total) actionSliderTimer = setTimeout(jumpActionFromSlider, 0);
+  });
+  actionSlider.addEventListener("change", function () {
+    if (actionSliderTimer !== null) {
+      clearTimeout(actionSliderTimer);
+      actionSliderTimer = null;
+    }
+    jumpActionFromSlider();
+  });
+}
+  
+  
+  
+  
+  
+  
+  
   
   
   const only = $("actionOnlyHits");
@@ -6122,10 +6184,12 @@ if (delBtn) {
    $("actionHitPrev").addEventListener("click", function () {
   
   stepActionHit(-1);
+  updateActionNavSlider();
   })
      $("actionHitNext").addEventListener("click", function () {
   
   stepActionHit(1);
+  updateActionNavSlider();
   })
   
   
@@ -6288,7 +6352,7 @@ chrome.runtime.onMessage.addListener(function (msg) {
 
 
 
-(function addStatusDot() {
+if  (0) (function addStatusDot() {
   const status = document.getElementById("status");
   if (!status || document.getElementById("statusDot")) return;
   const dot = document.createElement("span");
@@ -6296,3 +6360,251 @@ chrome.runtime.onMessage.addListener(function (msg) {
   dot.className = "status-dot";
   status.insertBefore(dot, status.firstChild);
 })();
+
+
+
+async function exportActionsInRange(asText = false) {
+  parseActionFormat();
+  const all = await loadAllActions();
+  const ranged = all
+    .filter((rec) => actionInRange(rec.ts))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0)); // newest first, matching refreshActionPane
+
+  const content = asText
+    ? ranged.map((rec) => formatActionNode(rec)).join("\n\n---\n\n")
+    : JSON.stringify({
+        exportedAt: fmtTs(Date.now()),
+        from: ($("actionFrom") && $("actionFrom").value) || null,
+        to: ($("actionTo") && $("actionTo").value) || null,
+        count: ranged.length,
+        actions: ranged.map((rec) => ({
+          ...rec,
+          formatted: formatActionNode(rec)
+        }))
+      }, null, 2);
+
+  const blob = new Blob([content], { type: asText ? "text/plain;charset=utf-8" : "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = asText ? "ai-chat-actions-ranged.txt" : "ai-chat-actions-ranged.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+
+async function exportAllActions(asText = false) {
+  parseActionFormat();
+  const all = await loadAllActions();
+  all.sort((a, b) => (b.ts || 0) - (a.ts || 0)); // newest first
+
+  const content = asText
+    ? all.map((rec) => formatActionNode(rec)).join("\n\n---\n\n")
+    : JSON.stringify({
+        exportedAt: fmtTs(Date.now()),
+        count: all.length,
+        actions: all.map((rec) => ({
+          ...rec,
+          formatted: formatActionNode(rec)
+        }))
+      }, null, 2);
+
+  const blob = new Blob([content], { type: asText ? "text/plain;charset=utf-8" : "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = asText ? "ai-chat-actions-all.txt" : "ai-chat-actions-all.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+
+const exportRangeBtn = $("actionExportRangeBtn");
+if (exportRangeBtn) {
+  exportRangeBtn.addEventListener("click", () => exportActionsInRange(false)); // pass true for .txt
+}
+
+const exportAllBtn = $("actionExportAllBtn");
+if (exportAllBtn) {
+  exportAllBtn.addEventListener("click", () => exportAllActions(false)); // pass true for .txt
+}
+
+function actionSignature(rec) {
+  if (!rec || typeof rec !== "object") return "";
+  const ts = Number(rec.ts);
+  const normTs = Number.isFinite(ts) && ts > 0 ? ts : 0;
+  const actionType = String(rec.action_type || rec.action || "");
+  const nid = String(rec.nid || "");
+  const convKey = String(rec.convKey || "");
+  return [normTs, actionType, nid, convKey].join("|");
+}
+
+async function writeActionRecords(records) {
+  if (!Array.isArray(records) || !records.length) return 0;
+  const existing = await loadAllActions();
+  const seen = new Set(existing.map(actionSignature).filter(Boolean));
+
+  const db = await openActionDb();
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction(ACTION_STORE, "readwrite");
+    const store = tx.objectStore(ACTION_STORE);
+    let written = 0;
+
+    records.forEach(function (raw) {
+      if (!raw || typeof raw !== "object") return;
+      const ts = Number(raw.ts);
+      const item = {
+        ts: Number.isFinite(ts) && ts > 0 ? ts : Date.now(),
+        action_type: String(raw.action_type || raw.action || ""),
+        nid: String(raw.nid || ""),
+        convKey: String(raw.convKey || "")
+      };
+      if (!item.action_type && !item.nid && !item.convKey) return;
+
+      const sig = actionSignature(item);
+      if (sig && seen.has(sig)) return;
+      if (sig) seen.add(sig);
+
+      const req = store.add(item);
+      req.onsuccess = function () { written++; };
+    });
+
+    tx.oncomplete = function () { resolve(written); };
+    tx.onerror = function () { reject(tx.error); };
+    tx.onabort = function () { reject(tx.error); };
+  });
+}
+async function writeActionRecords_nodedup(records) {
+  if (!Array.isArray(records) || !records.length) return 0;
+  const db = await openActionDb();
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction(ACTION_STORE, "readwrite");
+    const store = tx.objectStore(ACTION_STORE);
+    let written = 0;
+
+    records.forEach(function (raw) {
+      if (!raw || typeof raw !== "object") return;
+      const ts = Number(raw.ts);
+      const item = {
+        ts: Number.isFinite(ts) && ts > 0 ? ts : Date.now(),
+        action_type: String(raw.action_type || raw.action || ""),
+        nid: String(raw.nid || ""),
+        convKey: String(raw.convKey || "")
+      };
+      if (!item.action_type && !item.nid && !item.convKey) return;
+      const req = store.add(item);
+      req.onsuccess = function () { written++; };
+    });
+
+    tx.oncomplete = function () { resolve(written); };
+    tx.onerror = function () { reject(tx.error); };
+    tx.onabort = function () { reject(tx.error); };
+  });
+}
+
+function extractImportedActions(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray(parsed.actions)) return parsed.actions;
+  if (parsed && Array.isArray(parsed.items)) return parsed.items;
+  throw new Error("JSON must be an array or contain an 'actions' array.");
+}
+
+
+async function importActionsInRangeFromFile(file) {
+  if (!file) return;
+  const parsed = JSON.parse(await file.text());
+  const rawList = extractImportedActions(parsed);
+
+  const ranged = rawList.filter(function (rec) {
+    return actionInRange(rec && rec.ts);
+  });
+
+  const count = await writeActionRecords(ranged);
+  if (filter === "actions") await refreshActionPane();
+  if ($("actionStatus")) {
+    $("actionStatus").textContent = "Imported " + count + " of " + rawList.length + " action(s) in range.";
+  }
+}
+
+
+async function importAllActionsFromFile(file) {
+  if (!file) return;
+  const parsed = JSON.parse(await file.text());
+  const rawList = extractImportedActions(parsed);
+
+  const count = await writeActionRecords(rawList);
+  if (filter === "actions") await refreshActionPane();
+  if ($("actionStatus")) {
+    $("actionStatus").textContent = "Imported all " + count + " valid action(s) from file.";
+  }
+}
+
+
+const rangeInp = $("actionRangeFileInput");
+const rangeBtn = $("actionImportRangeBtn");
+if (rangeBtn && rangeInp) {
+  rangeBtn.addEventListener("click", () => rangeInp.click());
+  rangeInp.addEventListener("change", async function (e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    try { await importActionsInRangeFromFile(file); }
+    catch (err) { if ($("actionStatus")) $("actionStatus").textContent = "Range import failed: " + err.message; }
+  });
+}
+
+
+async function clearAllActionRecords() {
+  const db = await openActionDb();
+  await new Promise(function (resolve, reject) {
+    const tx = db.transaction(ACTION_STORE, "readwrite");
+    const store = tx.objectStore(ACTION_STORE);
+    const req = store.clear();
+    req.onsuccess = function () { resolve(); };
+    req.onerror = function () { reject(req.error); };
+    tx.onabort = function () { reject(tx.error); };
+  });
+
+  actionRecords = [];
+  actionFiltered = [];
+  if (typeof clearActionSelection === "function") clearActionSelection();
+  if (filter === "actions") await refreshActionPane();
+  if ($("actionStatus")) $("actionStatus").textContent = "Cleared all action records.";
+}
+
+const allInp = $("actionAllFileInput");
+const allBtn = $("actionImportAllBtn");
+if (allBtn && allInp) {
+  allBtn.addEventListener("click", () => allInp.click());
+  allInp.addEventListener("change", async function (e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    try { await importAllActionsFromFile(file); }
+    catch (err) { if ($("actionStatus")) $("actionStatus").textContent = "Full import failed: " + err.message; }
+  });
+}
+
+
+
+async function pickAndImportActionsInRange() {
+  const file = await new Promise((resolve) => {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = ".json,application/json";
+    inp.style.display = "none";
+    document.body.appendChild(inp);
+
+    inp.addEventListener("change", () => {
+      const f = inp.files && inp.files[0] ? inp.files[0] : null;
+      inp.remove();
+      resolve(f);
+    }, { once: true });
+
+    inp.addEventListener("cancel", () => {
+      inp.remove();
+      resolve(null);
+    }, { once: true });
+
+    inp.click();
+  });
+
+  if (!file) return 0;
+  return await importActionsInRangeFromFile(file);
+}
