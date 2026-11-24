@@ -1617,7 +1617,7 @@ function updateExistingTimeNavSlider4() {}
 
 
 function updateExistingTimeNavSlider2() {
-  console.log ("updateExistingTimeNavSlider#2    is called ")
+  //console.log ("updateExistingTimeNavSlider#2    is called ")
 
 //  ---if using this , when 'unfold all'  for a chat , it will induce a race condition. 
   const slider = $("existingTimeNavSlider");
@@ -1647,14 +1647,14 @@ count.textContent = total ? position + " ------ " + total : "0 / 0";
 }
 
 function updateExistingTimeNavSlider() {
-  console.log ("updateExistingTimeNavSlider is called ")
+  //console.log ("updateExistingTimeNavSlider is called ")
   const slider = $("existingTimeNavSlider");
   const count = $("existingTimeNavSliderCount");
   //if (!slider || !count) return;
   if (!slider ) return;
   const items = getExistingTimeNavigationItems();
   items;
-   console.log ("in updateExistingTimeNavSlider assign to lastsorteditems ")
+   //console.log ("in updateExistingTimeNavSlider assign to lastsorteditems ")
     lastsorteditems = items;
   drawExistingTimeHitStrip(items);
   const total = items.length;
@@ -2895,6 +2895,15 @@ document.addEventListener("click", function (e) {
         applyEditedText(rk, kind, editedText);
         messageBox.innerHTML = originalHtml;
         refreshEditedMessageInNode(nodeEl, dotsBtn, editedText);
+        
+        const nid = String(dotsBtn.dataset.nid || (nodeEl && nodeEl.dataset.nid) || "");
+        const ck = String((nodeEl && nodeEl.dataset.ck) || nidToConvKey.get(nid) || "");
+        if (typeof logUserAction === "function") {
+  logUserAction("edit", nid, ck);
+}
+updateNonEmptyActionPaneForEdit(nid, ck);
+prependActionRecordToNonEmptyPane("edit", nid, ck);        
+        
         $("status").textContent = "Text saved.";
       });
     };
@@ -2917,6 +2926,9 @@ document.addEventListener("click", function (e) {
     if (hit && hit.node) hit.node.liked = liked;
     if (ck) openChats.add(ck);
     logUserAction(liked ? "like" : "unlike", nid, ck);
+    
+    prependActionRecordToNonEmptyPane(liked ? "like" : "unlike", nid, ck);;
+    
     chrome.runtime.sendMessage({ type: "set-liked", recordKey: rk, kind: kind, liked: liked }, function (res) {
       const err = chrome.runtime.lastError;
       const again = findByNid(nid);
@@ -3614,7 +3626,7 @@ function applyChatItemVisibility(ck, createMissing, preserveExisting) {
 
 function ensureTitleNidRendered(nid, tokens) {
     //dirtyflag1 = false;
-    console.log("in begin of   ensureTitleNidRendered :    "  ,nid, tokens   );
+    //console.log("in begin of   ensureTitleNidRendered :    "  ,nid, tokens   );
   const titleBody = $("titleView");
   const already = titleBody.querySelector('[data-nid="' + CSS.escape(nid) + '"]');
   if (already) { already.hidden = false; return true; }
@@ -5903,15 +5915,95 @@ function actionInRange(ts) {
   return true;
 }
 
-async function refreshActionPane() {
+
+function rebuildActionHitsFromFiltered() {
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+  if (typeof actionHits !== "undefined" && Array.isArray(actionHits)) {
+    actionHits.length = 0;
+    actionFiltered.forEach(function (rec, idx) {
+      if (!tokens.length || hayHasTokens(formatActionNode(rec), tokens)) {
+        actionHits.push(idx);
+      }
+    });
+  }
+}
+
+
+function prependActionRecordToNonEmptyPane(actionType, nid, convKey) {
+  const list = $("actionList");
+  if (!list || list.querySelectorAll(".action-node").length === 0) return;
+
+  parseActionFormat();
+  const rec = {
+    id: "live-" + Date.now(),
+    ts: Date.now(),
+    action_type: String(actionType || ""),
+    nid: String(nid || ""),
+    convKey: String(convKey || "")
+  };
+
+  actionRecords.unshift(rec);
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+  const onlyHits = $("actionOnlyHits") && $("actionOnlyHits").checked;
+  const raw = formatActionNode(rec);
+  if (!actionInRange(rec.ts)) return;
+  if (onlyHits && tokens.length && !hayHasTokens(raw, tokens)) return;
+
+  actionFiltered.unshift(rec);
+  if (nid && convKey) nidToConvKey.set(String(nid), String(convKey));
+
+  const html =
+    '<div class="action-node ptt-node" data-idx="0" data-nid="' + esc(rec.nid) + '" data-ck="' + esc(rec.convKey) + '">' +
+    '<div class="ptt-row"><div class="ptt-txt">' + highlightText(raw, tokens) + '</div></div></div>';
+  list.insertAdjacentHTML("afterbegin", html);
+
+  Array.from(list.querySelectorAll(".action-node")).forEach(function (node, i) {
+    node.dataset.idx = String(i);
+    if (actionCursor >= 0) node.classList.toggle("sel", i === actionCursor + 1);
+  });
+  if (actionCursor >= 0) actionCursor += 1;
+  if ($("actionStatus")) $("actionStatus").textContent = actionFiltered.length + " action(s)";
+}
+
+function updateNonEmptyActionPaneForEdit(nid, convKey) {
+  const list = $("actionList");
+  if (!list || list.querySelectorAll(".action-node").length === 0) return;
+  parseActionFormat();
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+  const targetNid = String(nid || "");
+
+  actionFiltered.forEach(function (rec) {
+    if (String(rec.nid || "") === targetNid) {
+      const el = list.querySelector('.action-node[data-nid="' + CSS.escape(targetNid) + '"]');
+      const txtEl = el && el.querySelector(".ptt-txt");
+      if (txtEl) txtEl.innerHTML = highlightText(formatActionNode(rec), tokens);
+    }
+  });
+}
+
+
+async function refreshActionPane(forceLoad = false) {
   if (filter !== "actions") return;
+  const list = $("actionList");
+  const isEmpty = !list || list.querySelectorAll(".action-node").length === 0;
+
+  if (!forceLoad && !isEmpty) {
+    if ($("actionStatus")) {
+      $("actionStatus").textContent = actionFiltered.length + " action(s) (cached)";
+    }
+    return;
+  }
+
   parseActionFormat();
   try {
     actionRecords = await loadAllActions();
   } catch (e) {
     actionRecords = [];
   }
-  actionRecords.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); }); // newest first
+  actionRecords.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
   const q = ($("actionQ") && $("actionQ").value) || "";
   const tokens = parseSearch(q).tokens;
   const onlyHits = $("actionOnlyHits") && $("actionOnlyHits").checked;
@@ -5927,7 +6019,6 @@ async function refreshActionPane() {
   if ($("actionStatus")) $("actionStatus").textContent = actionFiltered.length + " action(s)";
   if (actionCursor >= actionFiltered.length) actionCursor = actionFiltered.length - 1;
 }
-
 
 function selectActionAt(idx, fillGlobalInput = true) {
   const list = $("actionList");
@@ -6027,6 +6118,7 @@ function bindActionControls() {
     if (e.key === "Enter") {
       e.preventDefault();
       refreshActionPane();
+      refreshActionPaneHighlights();
     }
   });
 }
@@ -6124,10 +6216,10 @@ if (actionSlider) {
   const indexInput = $("globalIndexInput");
   if (indexInput) indexInput.value = "";
 }
-  
   const delBtn = $("actionDelBtn");
 if (delBtn) {
   delBtn.addEventListener("click", async function () {
+    const list = $("actionList");
     if (actionCursor < 0 || actionCursor >= actionFiltered.length) {
       if ($("actionStatus")) $("actionStatus").textContent = "Select an action item first.";
       return;
@@ -6137,48 +6229,179 @@ if (delBtn) {
       if ($("actionStatus")) $("actionStatus").textContent = "Selected action has no ID.";
       return;
     }
+
     try {
       await deleteActionById(target.id);
-      if (actionCursor >= actionFiltered.length - 1) {
-        actionCursor = Math.max(-1, actionFiltered.length - 2);
+
+      // 1. Remove only the target DOM node (by data-action-id if present, else by current data-idx).
+      if (list) {
+        const byId = list.querySelector('.action-node[data-action-id="' + CSS.escape(String(target.id)) + '"]');
+        const byIdx = list.querySelector('.action-node[data-idx="' + actionCursor + '"]');
+        const nodeToRemove = byId || byIdx;
+        if (nodeToRemove) nodeToRemove.remove();
       }
-      await refreshActionPane();
-      if (actionCursor >= 0 && actionFiltered.length) {
-        selectActionAt(actionCursor, true);
-      } else {
+
+      // 2. Keep in-memory arrays in sync without re-reading IndexedDB or rebuilding innerHTML.
+      actionRecords = actionRecords.filter(function (rec) { return rec !== target && rec.id !== target.id; });
+      actionFiltered.splice(actionCursor, 1);
+
+      // 3. Re-index remaining .action-node elements so data-idx stays contiguous.
+      const remaining = list ? Array.from(list.querySelectorAll(".action-node")) : [];
+      remaining.forEach(function (node, i) {
+        node.dataset.idx = String(i);
+        node.classList.remove("sel");
+      });
+
+      // 4. Update cursor and selection without triggering a full list re-render.
+      if (!actionFiltered.length || !remaining.length) {
         clearActionSelection();
+      } else {
+        if (actionCursor >= actionFiltered.length) {
+          actionCursor = actionFiltered.length - 1;
+        }
+        const nextNode = list.querySelector('.action-node[data-idx="' + actionCursor + '"]');
+        if (nextNode) nextNode.classList.add("sel");
+        updateActionNavSlider();
       }
+
       if ($("actionStatus")) $("actionStatus").textContent = "Deleted action #" + target.id + ".";
     } catch (err) {
-      if ($("actionStatus")) $("actionStatus").textContent = "Delete failed: " + (err && err.message ? err.message : String(err));
+      if ($("actionStatus")) {
+        $("actionStatus").textContent = "Delete failed: " + (err && err.message ? err.message : String(err));
+      }
     }
   });
 }
   
   
-  
-  
-  
-  
-  
-  function stepActionHit (dir) {
- 
-  const list = document.getElementById("actionList");
-  const nodes = Array.from(list.querySelectorAll(".action-node"));
-  if (!nodes.length) return null;
+  function scrollActionNodeIntoView(list, node) {
+  if (!list || !node) return;
+  if (list.offsetParent === null || list.clientHeight === 0) return;
 
-  const start = (typeof actionCursor === "number" && actionCursor >= 0) ? actionCursor : -1;
-  for (let offset = 1; offset <= nodes.length; offset++) {
-    const idx = (start + dir * offset) % nodes.length;
-    if (nodes[idx].querySelector(".hit")) {
-      if (typeof actionCursor === "number") actionCursor = idx;
-      nodes.forEach((n, i) => n.classList.toggle("sel", i === idx));
-      nodes[idx].scrollIntoView({ block: "nearest" });
-      return { idx, el: nodes[idx] };
+  const listRect = list.getBoundingClientRect();
+  const nodeRect = node.getBoundingClientRect();
+  const relativeTop = nodeRect.top - listRect.top + list.scrollTop;
+  const targetTop = relativeTop - (list.clientHeight - nodeRect.height) / 2;
+
+  list.scrollTo({
+    top: Math.max(0, targetTop),
+    behavior: "auto"
+  });
+}
+
+
+function refreshActionPaneHighlights() {
+  const list = $("actionList");
+  if (!list) return;
+
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+  const nodes = Array.from(list.querySelectorAll(".action-node"));
+
+  nodes.forEach(function (node, i) {
+    const idxAttr = Number(node.dataset.idx);
+    const recIdx = Number.isInteger(idxAttr) && idxAttr >= 0 ? idxAttr : i;
+    const rec = actionFiltered[recIdx];
+    const txtEl = node.querySelector(".ptt-txt");
+    if (rec && txtEl) {
+      txtEl.innerHTML = highlightText(formatActionNode(rec), tokens);
+    }
+  });
+}
+let actionHits = [];
+
+function recomputeActionHits() {
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+  actionHits = [];
+  for (let i = 0; i < actionFiltered.length; i++) {
+    if (!tokens.length || hayHasTokens(formatActionNode(actionFiltered[i]), tokens)) {
+      actionHits.push(i);
     }
   }
-  return null;
 }
+
+function stepActionHit(dir) {
+  const list = $("actionList");
+  if (!list || !actionFiltered.length) return;
+  if (!actionHits.length) recomputeActionHits();
+  if (!actionHits.length) return;
+
+  let pos = actionHits.indexOf(actionCursor);
+  if (pos === -1) {
+    pos = dir > 0 ? 0 : actionHits.length - 1;
+  } else {
+    pos = (pos + dir + actionHits.length) % actionHits.length;
+  }
+
+  const targetIdx = actionHits[pos];
+  actionCursor = targetIdx;
+
+  const nodes = list.querySelectorAll(".action-node");
+  for (let i = 0; i < nodes.length; i++) {
+    nodes[i].dataset.idx = String(i);
+    nodes[i].classList.toggle("sel", i === targetIdx);
+  }
+
+  const targetNode = nodes[targetIdx];
+  if (targetNode && list.offsetParent !== null && list.clientHeight > 0) {
+    const listRect = list.getBoundingClientRect();
+    const nodeRect = targetNode.getBoundingClientRect();
+    const targetTop = nodeRect.top - listRect.top + list.scrollTop - (list.clientHeight - nodeRect.height) / 2;
+    list.scrollTop = Math.max(0, targetTop);
+  }
+}
+
+function stepActionHit_mayre_render(dir) {
+  const list = $("actionList");
+  if (!list || !actionFiltered.length) return;
+
+  const q = ($("actionQ") && $("actionQ").value) || "";
+  const tokens = parseSearch(q).tokens;
+
+  const hitIndices = [];
+  actionFiltered.forEach(function (rec, i) {
+    if (!tokens.length || hayHasTokens(formatActionNode(rec), tokens)) {
+      hitIndices.push(i);
+    }
+  });
+  if (!hitIndices.length) return;
+
+  let pos = hitIndices.indexOf(actionCursor);
+  if (pos === -1) {
+    pos = dir > 0 ? 0 : hitIndices.length - 1;
+  } else {
+    pos = (pos + dir + hitIndices.length) % hitIndices.length;
+  }
+
+  const targetIdx = hitIndices[pos];
+  actionCursor = targetIdx;
+
+  const nodes = Array.from(list.querySelectorAll(".action-node"));
+  nodes.forEach(function (n, i) {
+    n.dataset.idx = String(i);
+    n.classList.toggle("sel", i === targetIdx);
+  });
+
+  const targetNode = nodes[targetIdx];
+  if (targetNode) {
+    scrollActionNodeIntoView(list, targetNode);
+  }
+
+  if (typeof updateActionNavSlider === "function") {
+    updateActionNavSlider();
+  }
+  if ($("actionStatus")) {
+    $("actionStatus").textContent =
+      "Hit " + (pos + 1) + " of " + hitIndices.length + " (" + actionFiltered.length + " total)";
+  }
+}
+
+
+
+
+
+
 
 
    $("actionHitPrev").addEventListener("click", function () {
@@ -6362,7 +6585,8 @@ if  (0) (function addStatusDot() {
 })();
 
 
-
+//use pickAndImportActionsInRange to import from the export action .json file . 
+//use exportActionsInRange to  export to action .json file . 
 async function exportActionsInRange(asText = false) {
   parseActionFormat();
   const all = await loadAllActions();
