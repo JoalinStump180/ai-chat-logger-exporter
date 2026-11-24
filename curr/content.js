@@ -344,24 +344,21 @@ function ancestorTermMatches_new(el, rawTerm) {
         u.hash = "";
         
         console.log( "calling logask() in enter path, text is : "    + text+'     logask enter',"enter");
-        logAsk(text+'     logask enter',"enter");
+        if (1) logAsk(text+'     logask enter',"enter");
         console.log( `ORG enter path will be:   platform ${hit.id}  conversationId: ${convId||u.pathname},  
                   url: ${u.origin + u.pathname + u.search},
-           text: ${text+'     other plat'},
-        
-        
-        `
+           text: DD${text}DD`
         );
         
         
         
-        if (0) chrome.runtime.sendMessage({
+        if (!convId) chrome.runtime.sendMessage({
           type: "log-ask",
           platform: hit.id,
           conversationId: convId||u.pathname,
           url: u.origin + u.pathname + u.search,
           title: document.title,
-          text: text+'     other plat',
+          text: text+'other plat',
           logAsks: true,
           ts: Date.now(),
           nonce: Date.now() + "-extra"
@@ -433,10 +430,10 @@ function ancestorTermMatches_new(el, rawTerm) {
   return matched;
 });
  
-    const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
+    //const bag = await chrome.storage.local.get(["flag1", "flag2", "flag3"]);
  
 
-  if (!isSend)   if (bag.flag1) alert ("[DEBUG] Not a Send-button click in 3rd site");
+  if (!isSend)   if (flags.flag1) alert ("[DEBUG] Not a Send-button click in 3rd site");
   if (!isSend)   return;
   
 
@@ -450,7 +447,7 @@ function ancestorTermMatches_new(el, rawTerm) {
   
 
 
-if (bag.flag2) {
+if (flags.flag2) {
   alert(
     "\nliveText is:" + ('prefix'+liveText+'postfix') +
     "\nmousedownText is: " + (mousedownText || "").split("\n")[0] +
