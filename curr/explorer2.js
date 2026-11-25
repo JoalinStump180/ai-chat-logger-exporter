@@ -6165,13 +6165,13 @@ seek = function (q) {
     req.onerror = function () { reject(req.error); };
   });
 }
-
+//let actionHits = [];
 
 // Bind action pane controls
 function bindActionControls() {
   const q = $("actionQ");
   //if (q) q.addEventListener("input", function () { refreshActionPane(); });
-  if (q) {
+  if (0) if (q) {
   q.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -6180,7 +6180,23 @@ function bindActionControls() {
     }
   });
 }
-
+if (q) {
+  q.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if ($("actionOnlyHits") && $("actionOnlyHits").checked) {
+        refreshActionPane(true);
+      }
+      recomputeActionHits();
+      actionCursor = -1;
+      refreshActionPaneHighlights();
+      if ($("actionStatus")) {
+        $("actionStatus").textContent =
+          actionHits.length + " hit(s) in " + actionFiltered.length + " action(s)";
+      }
+    }
+  });
+}
   
   const actionSlider = $("actionNavSlider");
 let actionSliderTimer = null;
@@ -6218,7 +6234,24 @@ if (actionSlider) {
 }
   
   
-  
+  const ACTION_FROM_KEY = "explorerActionFromValue";
+const ACTION_TO_KEY = "explorerActionToValue";
+
+function saveActionDateRange() {
+  const fromVal = $("actionFrom") ? String($("actionFrom").value || "") : "";
+  const toVal = $("actionTo") ? String($("actionTo").value || "") : "";
+  try {
+    chrome.storage.local.set({
+      [ACTION_FROM_KEY]: fromVal,
+      [ACTION_TO_KEY]: toVal
+    });
+  } catch (_) {}
+}
+
+function applyActionDateFilter() {
+  saveActionDateRange();
+  refreshActionPane(true);
+}
   
   
   
@@ -6228,27 +6261,41 @@ if (actionSlider) {
   const only = $("actionOnlyHits");
   if (only) only.addEventListener("change", function () { refreshActionPane(); });
   ["actionFrom", "actionTo"].forEach(function (id) {
-    const box = $(id);
-    if (!box) return;
-    box.addEventListener("change", function () { refreshActionPane(); });
-    box.addEventListener("input", function () { refreshActionPane(); });
-  });
-  function bindCal(which) {
-    const box = $(which === "from" ? "actionFrom" : "actionTo");
-    const cal = $(which === "from" ? "actionFromCal" : "actionToCal");
-    const picker = $(which === "from" ? "actionFromPicker" : "actionToPicker");
-    if (!box || !cal || !picker) return;
-    function open() {
-      if (box.value && /^\d{4}-\d{2}-\d{2}/.test(box.value)) picker.value = box.value.slice(0, 10);
-      if (picker.showPicker) picker.showPicker(); else picker.click();
-    }
-    cal.addEventListener("click", open);
-    box.addEventListener("click", open);
-    picker.addEventListener("change", function () { box.value = picker.value || ""; refreshActionPane(); });
+  const box = $(id);
+  if (!box) return;
+  box.addEventListener("change", applyActionDateFilter);
+  box.addEventListener("input", applyActionDateFilter);
+});
+
+function bindCal(which) {
+  const box = $(which === "from" ? "actionFrom" : "actionTo");
+  const cal = $(which === "from" ? "actionFromCal" : "actionToCal");
+  const picker = $(which === "from" ? "actionFromPicker" : "actionToPicker");
+  if (!box || !cal || !picker) return;
+  function open() {
+    if (box.value && /^\d{4}-\d{2}-\d{2}/.test(box.value)) picker.value = box.value.slice(0, 10);
+    if (picker.showPicker) picker.showPicker(); else picker.click();
   }
-  bindCal("from");
-  bindCal("to");
-  
+  cal.addEventListener("click", open);
+  box.addEventListener("click", open);
+  function syncFromPicker() {
+    box.value = picker.value || "";
+    applyActionDateFilter();
+  }
+  picker.addEventListener("change", syncFromPicker);
+  picker.addEventListener("input", syncFromPicker);
+}
+bindCal("from");
+bindCal("to");
+
+chrome.storage.local.get({
+  [ACTION_FROM_KEY]: "",
+  [ACTION_TO_KEY]: ""
+}).then(function (bag) {
+  if ($("actionFrom")) $("actionFrom").value = bag[ACTION_FROM_KEY] || "";
+  if ($("actionTo")) $("actionTo").value = bag[ACTION_TO_KEY] || "";
+  if (filter === "actions") refreshActionPane(true);
+});
   
   
   
@@ -6356,6 +6403,7 @@ function refreshActionPaneHighlights() {
     }
   });
 }
+
 let actionHits = [];
 
 function recomputeActionHits() {
@@ -6517,7 +6565,7 @@ function stepActionHit_mayre_render(dir) {
     selectActionAt(idx, true);
   });
 }
-
+// end of function  bindactioncontrols
 
 
 
