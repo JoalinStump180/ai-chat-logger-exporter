@@ -270,7 +270,7 @@
 </label>
 <div id="tokenBar"></div>
 <label title="Prepend newly arriving chats and items to the top of the title pane">
-  <input id="prependNew" type="checkbox" checked/> Prepend new
+  <input id="prependNew" type="checkbox" /> Prepend new
 </label>
 <button id="clearAllBtn" title="Clear the search box and remove every existing item" type="button">Clear all</button>
 <button id="forceSearch" title="Treat every visible item's first line as a hit, even with an empty search" type="button">Force search</button>
@@ -435,6 +435,10 @@ goNext/prev global button :made global record prev next m/n item exsiting.
 
 --------------------
 help: in each chat infobar:  'ua' - 'unfold all'  ;'ue' - 'unfold exsiting'  ;'ur' - 'unfold range'  ;fold - fold existing items
+
+//use pickAndImportActionsInRange to import from the export action .json file . 
+//use exportActionsInRange to  export to action .json file . 
+
 
 " title="onMsg: URL matches this route. Optional filters: wldiv:token, div.classPart, div#idPart; bldiv:token, div.classPart, div#idPart. Terms may be comma-separated or repeated on multiple lines. Blacklist overrides whitelist."></textarea>
 <button id="routeSave" type="button">Save</button>

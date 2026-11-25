@@ -2899,10 +2899,11 @@ document.addEventListener("click", function (e) {
         const nid = String(dotsBtn.dataset.nid || (nodeEl && nodeEl.dataset.nid) || "");
         const ck = String((nodeEl && nodeEl.dataset.ck) || nidToConvKey.get(nid) || "");
         if (typeof logUserAction === "function") {
-  logUserAction("edit", nid, ck);
+  actionEntry=logUserAction("edit", nid, ck);
+  prependActionRecordToNonEmptyPane(actionEntry);
 }
-updateNonEmptyActionPaneForEdit(nid, ck);
-prependActionRecordToNonEmptyPane("edit", nid, ck);        
+//updateNonEmptyActionPaneForEdit(nid, ck);
+//prependActionRecordToNonEmptyPane("edit", nid, ck);        
         
         $("status").textContent = "Text saved.";
       });
@@ -2925,9 +2926,12 @@ prependActionRecordToNonEmptyPane("edit", nid, ck);
     if (!rk) { $("status").textContent = "Like failed: no record for " + nid; return; }
     if (hit && hit.node) hit.node.liked = liked;
     if (ck) openChats.add(ck);
-    logUserAction(liked ? "like" : "unlike", nid, ck);
+   const actionEntry = logUserAction(liked ? "like" : "unlike", nid, ck);
+prependActionRecordToNonEmptyPane(actionEntry);
+   
+   // logUserAction(liked ? "like" : "unlike", nid, ck);
     
-    prependActionRecordToNonEmptyPane(liked ? "like" : "unlike", nid, ck);;
+    //prependActionRecordToNonEmptyPane(liked ? "like" : "unlike", nid, ck);;
     
     chrome.runtime.sendMessage({ type: "set-liked", recordKey: rk, kind: kind, liked: liked }, function (res) {
       const err = chrome.runtime.lastError;
@@ -5848,23 +5852,40 @@ function openActionDb() {
   return actionDbPromise;
 }
 
-function logUserAction(actionType, nid, convKey) {
-  openActionDb().then(function (db) {
+function logUserAction(actionType, nid, convKey, existingRec) {
+  const rec = existingRec || {
+    id: null,
+    ts: Date.now(),
+    action_type: String(actionType || ""),
+    nid: String(nid || ""),
+    convKey: String(convKey || "")
+  };
+
+  const promise = openActionDb().then(function (db) {
     return new Promise(function (resolve, reject) {
       const tx = db.transaction(ACTION_STORE, "readwrite");
-      tx.objectStore(ACTION_STORE).add({
-        ts: Date.now(),
-        action_type: String(actionType || ""),
-        nid: String(nid || ""),
-        convKey: String(convKey || "")
+      const req = tx.objectStore(ACTION_STORE).add({
+        ts: rec.ts,
+        action_type: rec.action_type,
+        nid: rec.nid,
+        convKey: rec.convKey
       });
-      tx.oncomplete = resolve;
-      tx.onerror = function () { reject(tx.error); };
+      req.onsuccess = function () {
+        const realId = req.result;
+        rec.id = realId;
+      };
+      req.onerror = function () { reject(req.error); };
+      tx.oncomplete = function () { resolve(rec); };
+      tx.onabort = function () { reject(tx.error); };
     });
   }).catch(function (err) {
     console.warn("Action log write failed", err);
+    return rec;
   });
+
+  return { rec: rec, promise: promise };
 }
+
 
 async function loadAllActions() {
   const db = await openActionDb();
@@ -5928,20 +5949,33 @@ function rebuildActionHitsFromFiltered() {
     });
   }
 }
+function addActionRecordToDb(actionType, nid, convKey) {
+  return openActionDb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(ACTION_STORE, "readwrite");
+      const req = tx.objectStore(ACTION_STORE).add({
+        ts: Date.now(),
+        action_type: String(actionType || ""),
+        nid: String(nid || ""),
+        convKey: String(convKey || "")
+      });
+      let insertedId = null;
+      req.onsuccess = function () { insertedId = req.result; };
+      req.onerror = function () { reject(req.error); };
+      tx.oncomplete = function () { resolve(insertedId); };
+      tx.onabort = function () { reject(tx.error); };
+    });
+  });
+}
 
 
-function prependActionRecordToNonEmptyPane(actionType, nid, convKey) {
+
+function prependActionRecordToNonEmptyPane(actionEntry) {
   const list = $("actionList");
-  if (!list || list.querySelectorAll(".action-node").length === 0) return;
+  if (!list || list.querySelectorAll(".action-node").length === 0 || !actionEntry || !actionEntry.rec) return;
 
   parseActionFormat();
-  const rec = {
-    id: "live-" + Date.now(),
-    ts: Date.now(),
-    action_type: String(actionType || ""),
-    nid: String(nid || ""),
-    convKey: String(convKey || "")
-  };
+  const rec = actionEntry.rec;
 
   actionRecords.unshift(rec);
   const q = ($("actionQ") && $("actionQ").value) || "";
@@ -5952,12 +5986,13 @@ function prependActionRecordToNonEmptyPane(actionType, nid, convKey) {
   if (onlyHits && tokens.length && !hayHasTokens(raw, tokens)) return;
 
   actionFiltered.unshift(rec);
-  if (nid && convKey) nidToConvKey.set(String(nid), String(convKey));
+  if (rec.nid && rec.convKey) nidToConvKey.set(String(rec.nid), String(rec.convKey));
 
   const html =
     '<div class="action-node ptt-node" data-idx="0" data-nid="' + esc(rec.nid) + '" data-ck="' + esc(rec.convKey) + '">' +
     '<div class="ptt-row"><div class="ptt-txt">' + highlightText(raw, tokens) + '</div></div></div>';
   list.insertAdjacentHTML("afterbegin", html);
+  const insertedEl = list.firstElementChild;
 
   Array.from(list.querySelectorAll(".action-node")).forEach(function (node, i) {
     node.dataset.idx = String(i);
@@ -5965,6 +6000,14 @@ function prependActionRecordToNonEmptyPane(actionType, nid, convKey) {
   });
   if (actionCursor >= 0) actionCursor += 1;
   if ($("actionStatus")) $("actionStatus").textContent = actionFiltered.length + " action(s)";
+
+  if (actionEntry.promise && typeof actionEntry.promise.then === "function") {
+    actionEntry.promise.then(function (updatedRec) {
+      if (insertedEl && updatedRec && updatedRec.id != null) {
+        insertedEl.dataset.actionId = String(updatedRec.id);
+      }
+    });
+  }
 }
 
 function updateNonEmptyActionPaneForEdit(nid, convKey) {
@@ -6109,6 +6152,21 @@ seek = function (q) {
 }
 
 
+
+
+
+  async function deleteActionById(id) {
+  if (id == null) return false;
+  const db = await openActionDb();
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction(ACTION_STORE, "readwrite");
+    const req = tx.objectStore(ACTION_STORE).delete(id);
+    req.onsuccess = function () { resolve(true); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+
+
 // Bind action pane controls
 function bindActionControls() {
   const q = $("actionQ");
@@ -6194,16 +6252,6 @@ if (actionSlider) {
   
   
   
-  async function deleteActionById(id) {
-  if (id == null) return false;
-  const db = await openActionDb();
-  return new Promise(function (resolve, reject) {
-    const tx = db.transaction(ACTION_STORE, "readwrite");
-    const req = tx.objectStore(ACTION_STORE).delete(id);
-    req.onsuccess = function () { resolve(true); };
-    req.onerror = function () { reject(req.error); };
-  });
-}
   
   function clearActionSelection() {
   actionCursor = -1;
@@ -6525,6 +6573,7 @@ function moveChatBarToTop(ck) {
 }
 
 function onExplorerAskAdded(msg) {
+if (!shouldPrependNew()) return;
   if (!msg || !msg.convKey || !msg.askKey) return;
   const ck = String(msg.convKey);
   const session = {
