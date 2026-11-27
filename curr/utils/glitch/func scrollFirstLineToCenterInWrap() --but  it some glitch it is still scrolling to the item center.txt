@@ -1,0 +1,65 @@
+
+function getFirstLineTargetRect(el) {
+  // 1. If el has visible element children, check the first one with non-zero size
+  // (avoids measuring a tall multi-line container as a whole)
+  for (const child of el.children) {
+    const r = child.getBoundingClientRect();
+    if (r.height > 0 && r.width > 0) {
+      // If that child itself has no element children (pure text block), measure line 1 via Range
+      if (child.children.length === 0) {
+        return getRangeRectForFirstLine(child) || r;
+      }
+      return r;
+    }
+  }
+
+  // 2. Otherwise el itself is a pure text container (or has no element children)
+  return getRangeRectForFirstLine(el) || el.getBoundingClientRect();
+}
+
+function getRangeRectForFirstLine(el) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let textNode;
+  while ((textNode = walker.nextNode())) {
+    if (textNode.nodeValue && textNode.nodeValue.trim().length > 0) {
+      break;
+    }
+  }
+  if (!textNode) return null;
+
+  const firstNonSpace = textNode.nodeValue.search(/\S/);
+  const start = firstNonSpace >= 0 ? firstNonSpace : 0;
+  const end = Math.min(textNode.nodeValue.length, start + 1);
+
+  const range = document.createRange();
+  range.setStart(textNode, start);
+  range.setEnd(textNode, end);
+
+  const rects = range.getClientRects();
+  return rects.length > 0 ? rects[0] : null;
+}
+
+function scrollFirstLineToCenterInWrap(el, wrap, behavior = "smooth", align = "center") {
+  if (!el) return;
+
+  const container = wrap || el.parentElement;
+  const rect = getFirstLineTargetRect(el);
+  if (!rect) return;
+
+  if (!container) {
+    el.scrollIntoView({ block: "center", inline: "nearest", behavior });
+    return;
+  }
+
+  const wrapRect = container.getBoundingClientRect();
+  const offset = align === "top"
+    ? (container.clientHeight / 2)
+    : (container.clientHeight / 2) - (rect.height / 2);
+
+  const targetTop = Math.max(
+    0,
+    container.scrollTop + rect.top - wrapRect.top - offset
+  );
+
+  container.scrollTo({ top: targetTop, behavior });
+}

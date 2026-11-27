@@ -1,0 +1,31 @@
+function scrollItemFirstLineToCenterTempMarker(el, wrap, behavior = "smooth") {
+  if (!el) return;
+  const container = wrap || el.closest(".listwrap") || document.querySelector(".listwrap");
+  const target = el.matches(".ptt-node")
+    ? (el.querySelector(":scope > .ptt-row .ptt-txt") || el.querySelector(":scope > .ptt-row") || el)
+    : el;
+
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
+  marker.style.visibility = "hidden";
+  marker.style.pointerEvents = "none";
+
+  let markerRect;
+  try {
+    target.prepend(marker);
+    markerRect = marker.getBoundingClientRect();
+  } finally {
+    marker.remove();
+  }
+
+  if (!container) {
+    el.scrollIntoView({ block: "center", inline: "nearest", behavior });
+    return;
+  }
+
+  const wrapRect = container.getBoundingClientRect();
+  const offset = (container.clientHeight / 2) - (markerRect.height / 2);
+  const targetTop = Math.max(0, container.scrollTop + markerRect.top - wrapRect.top - offset);
+
+  container.scrollTo({ top: targetTop, behavior });
+}
