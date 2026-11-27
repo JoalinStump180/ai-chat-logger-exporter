@@ -2036,8 +2036,10 @@ function selectItemByNid(nid, scroll = false, scrollMode = "center") {
     const textEl = el.querySelector(":scope > .ptt-row .ptt-txt") || el.querySelector("td:nth-child(3)");
     const textLength = textEl ? (textEl.textContent || "").trim().length : 0;
     const revealHead = scrollMode === "head" && textLength >= 240;
-
-    if (revealHead) {
+const wrap = el.closest(".listwrap") || document.querySelector(".listwrap");
+ //scrollItemFirstLineToCenter(el);
+ scrollItemFirstLineToCenterTempMarker(el);
+   if (0) if (revealHead) {
       // Positive offset places the item this many pixels below the top of
       // the scroll viewport (clear of the sticky DateTime/title header).
       // Negative values are supported to move the item closer to/above the top.
@@ -2045,20 +2047,25 @@ function selectItemByNid(nid, scroll = false, scrollMode = "center") {
       const offsetInput = $("headOffsetPx");
       const parsedOffset = offsetInput ? Number.parseInt(offsetInput.value, 10) : 36;
       const offset = Number.isFinite(parsedOffset) ? parsedOffset : 36;
-      if (wrap) {
+      //if (wrap) {
+      if (0) {
         const itemRect = el.getBoundingClientRect();
         const wrapRect = wrap.getBoundingClientRect();
         const targetTop = wrap.scrollTop + itemRect.top - wrapRect.top - offset;
         wrap.scrollTo({ top: targetTop, behavior: "smooth" });
       } else {
-        el.scrollIntoView({ block: "start", inline: "nearest", behavior: "smooth" });
+        //el.scrollIntoView({ block: "start", inline: "nearest", behavior: "smooth" });
+        scrollItemFirstLineToCenter(el);
       }
     } else {
-      el.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-        behavior: "smooth"
-      });
+    
+    //  el.scrollIntoView({
+    //    block: "center",
+    //    inline: "nearest",
+    //    behavior: "smooth"
+    //  });
+    scrollItemFirstLineToCenter(el);
+    
     }
   }
 
@@ -6928,4 +6935,54 @@ async function pickAndImportActionsInRange() {
 
   if (!file) return 0;
   return await importActionsInRangeFromFile(file);
+}
+
+
+
+
+function scrollItemFirstLineToCenter(el, behavior = "smooth") {
+  if (!el) return;
+  const targetForCenter = el.matches(".ptt-node")
+    ? (el.querySelector(":scope > .ptt-row .ptt-item-meta") || el.querySelector(":scope > .ptt-row") || el)
+    : el;
+
+  targetForCenter.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior
+  });
+}
+
+
+
+function scrollItemFirstLineToCenterTempMarker(el, wrap, behavior = "smooth") {
+  if (!el) return;
+  const container = wrap || el.closest(".listwrap") || document.querySelector(".listwrap");
+  const target = el.matches(".ptt-node")
+    ? (el.querySelector(":scope > .ptt-row .ptt-txt") || el.querySelector(":scope > .ptt-row") || el)
+    : el;
+
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
+  marker.style.visibility = "hidden";
+  marker.style.pointerEvents = "none";
+
+  let markerRect;
+  try {
+    target.prepend(marker);
+    markerRect = marker.getBoundingClientRect();
+  } finally {
+    marker.remove();
+  }
+
+  if (!container) {
+    el.scrollIntoView({ block: "center", inline: "nearest", behavior });
+    return;
+  }
+
+  const wrapRect = container.getBoundingClientRect();
+  const offset = (container.clientHeight / 2) - (markerRect.height / 2);
+  const targetTop = Math.max(0, container.scrollTop + markerRect.top - wrapRect.top - offset);
+
+  container.scrollTo({ top: targetTop, behavior });
 }
