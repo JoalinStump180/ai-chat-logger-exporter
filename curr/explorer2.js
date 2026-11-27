@@ -384,7 +384,8 @@ async function getAll() {
   const range = calendarRange();
   const query = calendarKeyRange(range);
   try {
-    const fromIdb = await readCalendarIndexedStore(STORE, "byCreatedAt", range);
+    //const fromIdb = await readCalendarIndexedStore(STORE, "byCreatedAt", range);
+    const fromIdb = await readCalendarIndexedStore(STORE, "byCreatedAt", { minTs: null, maxTs: null });
     // A range query is authoritative even when it returns zero rows. Never
     // replace that empty result with an unfiltered cache/background response.
     if (query.active) {
@@ -416,7 +417,8 @@ async function loadAsksIndex() {
   const query = calendarKeyRange(range);
   let all = [];
   try {
-    all = await readCalendarIndexedStore(ASK_STORE, "byTs", range);
+    //all = await readCalendarIndexedStore(ASK_STORE, "byTs", range);
+    all = await readCalendarIndexedStore(ASK_STORE, "byTs",  { minTs: null, maxTs: null });
   } catch (err) {
     if (query.active) throw err;
   }
@@ -521,6 +523,7 @@ function inTime(ts) {
   return true;
 }
 function chatInTime(r) {
+return true;
   const from = parseBound($("fromBox") && $("fromBox").value, false);
   const to = parseBound($("toBox") && $("toBox").value, true);
   if (from == null && to == null) return true;
